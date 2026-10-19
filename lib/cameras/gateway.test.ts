@@ -214,6 +214,25 @@ describe("EzvizGateway", () => {
         assert.equal(server.callsTo("/api/lapp/live/address/disable")[0].form.urlId, "live-1");
     });
 
+    it("ptz start mengirim arah dan kecepatan sedang; stop tanpa arah", async () => {
+        await ezviz.ptz(ref, { action: "start", move: "left" });
+        await ezviz.ptz(ref, { action: "stop" });
+        const start = server.callsTo("/api/lapp/device/ptz/start")[0].form;
+        assert.equal(start.deviceSerial, "D1");
+        assert.equal(start.channelNo, "1");
+        assert.equal(start.direction, "2");
+        assert.equal(start.speed, "1");
+        const stop = server.callsTo("/api/lapp/device/ptz/stop")[0].form;
+        assert.equal(stop.direction, undefined);
+    });
+
+    it("ptz di batas putar (60004) → ptz_limit; tanpa dukungan PTZ (60000) → unsupported", async () => {
+        server.overrides.set("/api/lapp/device/ptz/start", () => ({ body: { code: "60004", msg: "left limit" } }));
+        assert.equal(await kindOf(ezviz.ptz(ref, { action: "start", move: "left" })), "ptz_limit");
+        server.overrides.set("/api/lapp/device/ptz/start", () => ({ body: { code: "60000", msg: "no ptz" } }));
+        assert.equal(await kindOf(ezviz.ptz(ref, { action: "start", move: "up" })), "unsupported");
+    });
+
     it("captureSnapshot mengunduh gambar dari picUrl", async () => {
         const img = await ezviz.captureSnapshot(ref, { quality: 1 });
         assert.equal(img.contentType, "image/jpeg");

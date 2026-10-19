@@ -56,6 +56,10 @@ export type PlayerAccess = {
     domain: string;
 };
 
+export type PtzMove = "up" | "down" | "left" | "right";
+
+export type PtzCommand = { action: "start"; move: PtzMove } | { action: "stop" };
+
 export interface CameraGateway {
     readonly kind: "mock" | "ezviz";
 
@@ -72,6 +76,9 @@ export interface CameraGateway {
 
     /** Kredensial player ezopen; token ini SAMPAI ke browser (lihat catatan keamanan di route live). */
     getPlayerAccess(ref: DeviceRef, options?: { quality?: 1 | 2 }): Promise<PlayerAccess>;
+
+    /** Gerak pan/tilt. "start" bergerak terus sampai "stop" atau batas putar (error ptz_limit). */
+    ptz(ref: DeviceRef, command: PtzCommand): Promise<void>;
 
     /** Segmen rekaman MicroSD dalam rentang, terurut dan terpotong ke rentang. */
     listRecordings(ref: DeviceRef, range: RecordingRange): Promise<RecordingRange[]>;

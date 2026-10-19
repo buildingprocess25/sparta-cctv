@@ -5,6 +5,7 @@ import {
     DeviceNotFoundError,
     DeviceOfflineError,
     EzvizError,
+    PtzLimitError,
     RateLimitError,
     TokenExpiredError,
     UnsupportedError,
@@ -19,12 +20,16 @@ import type {
     DeviceRef,
     LiveStream,
     PlayerAccess,
+    PtzCommand,
+    PtzMove,
     RecordingRange,
     SnapshotImage,
     StartLiveOptions,
 } from "./gateway";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+const PTZ_DIRECTION = { up: 0, down: 1, left: 2, right: 3 } as const satisfies Record<PtzMove, number>;
 
 export type EzvizGatewayDeps = {
     client: EzvizClient;
@@ -48,6 +53,7 @@ function toGatewayError(error: unknown): GatewayError {
     if (error instanceof DeviceOfflineError) return new GatewayError("offline", message, options);
     if (error instanceof DeviceNotFoundError) return new GatewayError("not_found", message, options);
     if (error instanceof UnsupportedError) return new GatewayError("unsupported", message, options);
+    if (error instanceof PtzLimitError) return new GatewayError("ptz_limit", message, options);
     if (error instanceof RateLimitError) return new GatewayError("rate_limited", message, options);
     if (
         error instanceof AccountUnavailableError ||
@@ -168,6 +174,15 @@ export class EzvizGateway implements CameraGateway {
         const r = resolve(ref);
         await this.call(r.accountId, ({ accessToken, areaDomain }) =>
             this.client.disableLiveAddress(areaDomain, accessToken, r.deviceSerial, streamId, r.channelNo),
+        );
+    }
+
+    async ptz(ref: DeviceRef, command: PtzCommand): Promise<void> {
+        const r = resolve(ref);
+        await this.call(r.accountId, ({ accessToken, areaDomain }) =>
+            command.action === "start"
+                ? this.client.ptzStart(areaDomain, accessToken, r.deviceSerial, r.channelNo, PTZ_DIRECTION[command.move], 1)
+                : this.client.ptzStop(areaDomain, accessToken, r.deviceSerial, r.channelNo),
         );
     }
 

@@ -38,6 +38,9 @@ export class DeviceNotFoundError extends EzvizError {}
 /** 60020 / 2030 / 20015: perangkat tidak mendukung fungsi ini. */
 export class UnsupportedError extends EzvizError {}
 
+/** 60002–60005: PTZ sudah di batas putar (atas/bawah/kiri/kanan). */
+export class PtzLimitError extends EzvizError {}
+
 /** Gangguan sementara: jaringan, timeout, 49999, perangkat tidak merespons. Boleh dicoba lagi. */
 export class TransientError extends EzvizError {}
 
@@ -54,8 +57,9 @@ export class AccountUnavailableError extends EzvizError {
 const CREDENTIAL = new Set([10005, 10017, 10030]);
 const OFFLINE = new Set([20007, 2003]);
 const NOT_FOUND = new Set([20002, 20014, 20018, 20032, 2007, 20301, 20302, 20303]);
-const UNSUPPORTED = new Set([60020, 2030, 20015]);
-const TRANSIENT = new Set([49999, 20006, 20008, 2009, 60017]);
+const UNSUPPORTED = new Set([60020, 2030, 20015, 60000]);
+const PTZ_LIMIT = new Set([60002, 60003, 60004, 60005]);
+const TRANSIENT = new Set([49999, 20006, 20008, 2009, 60017, 60006]);
 
 export function classifyError(code: number, message: string, path: string): EzvizError {
     const text = `EZVIZ ${path}: ${message || "error"} (kode ${code})`;
@@ -66,6 +70,7 @@ export function classifyError(code: number, message: string, path: string): Ezvi
     if (OFFLINE.has(code)) return new DeviceOfflineError(text, code);
     if (NOT_FOUND.has(code)) return new DeviceNotFoundError(text, code);
     if (UNSUPPORTED.has(code)) return new UnsupportedError(text, code);
+    if (PTZ_LIMIT.has(code)) return new PtzLimitError(text, code);
     if (TRANSIENT.has(code)) return new TransientError(text, code);
     return new EzvizError(text, code);
 }

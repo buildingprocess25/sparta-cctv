@@ -7,6 +7,8 @@ import type {
     LiveAddress,
     LiveAddressRequest,
     LocalRecordSegment,
+    PtzDirection,
+    PtzSpeed,
 } from "./types";
 
 // Klien HTTP tipis untuk EZVIZ Open Platform. Lihat docs/ezviz-api-notes.md.
@@ -217,6 +219,31 @@ export class EzvizClient {
         channelNo = 1,
     ): Promise<void> {
         await this.post(areaDomain, "/api/lapp/live/address/disable", { accessToken, deviceSerial, channelNo, urlId });
+    }
+
+    // ---- PTZ -------------------------------------------------------------
+
+    /** Mulai gerak PTZ; kamera terus bergerak sampai ptzStop dipanggil atau mencapai batas. */
+    async ptzStart(
+        areaDomain: string,
+        accessToken: string,
+        deviceSerial: string,
+        channelNo: number,
+        direction: PtzDirection,
+        speed: PtzSpeed = 1,
+    ): Promise<void> {
+        await this.post(areaDomain, "/api/lapp/device/ptz/start", { accessToken, deviceSerial, channelNo, direction, speed });
+    }
+
+    /** Hentikan gerak PTZ; tanpa direction = hentikan semua arah. */
+    async ptzStop(
+        areaDomain: string,
+        accessToken: string,
+        deviceSerial: string,
+        channelNo: number,
+        direction?: PtzDirection,
+    ): Promise<void> {
+        await this.post(areaDomain, "/api/lapp/device/ptz/stop", { accessToken, deviceSerial, channelNo, direction });
     }
 
     // ---- rekaman MicroSD -------------------------------------------------

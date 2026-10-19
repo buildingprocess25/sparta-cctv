@@ -47,6 +47,7 @@ class FakeGateway implements CameraGateway {
         throw new Error("tidak dipakai");
     }
     async stopLive() {}
+    async ptz() {}
     async getPlayerAccess(): Promise<never> {
         throw new GatewayError("unsupported", "tidak dipakai di tes poller");
     }

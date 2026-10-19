@@ -63,3 +63,12 @@ export type LocalRecordSegment = {
     channelNo: string;
     type: string;
 };
+
+/**
+ * Arah PTZ EZVIZ (`device/ptz/start`): 0 atas, 1 bawah, 2 kiri, 3 kanan, 4 kiri-atas, 5 kiri-bawah,
+ * 6 kanan-atas, 7 kanan-bawah, 8 zoom optik masuk, 9 zoom optik keluar.
+ */
+export type PtzDirection = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+
+/** 0 lambat, 1 sedang, 2 cepat */
+export type PtzSpeed = 0 | 1 | 2;

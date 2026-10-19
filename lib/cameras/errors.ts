@@ -4,6 +4,8 @@ export type GatewayErrorKind =
     /** perangkat tidak ada / bukan milik akun / serial belum diisi */
     | "not_found"
     | "unsupported"
+    /** PTZ sudah di batas putar (bukan kegagalan) */
+    | "ptz_limit"
     /** kuota atau frekuensi panggilan EZVIZ terlampaui */
     | "rate_limited"
     /** akun EZVIZ tidak dapat dipakai (nonaktif, kredensial salah, token gagal) */

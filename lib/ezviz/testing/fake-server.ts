@@ -144,6 +144,8 @@ export class FakeEzvizServer {
                     expireTime: "2026-10-15 15:00:00",
                 });
             case "/api/lapp/live/address/disable":
+            case "/api/lapp/device/ptz/start":
+            case "/api/lapp/device/ptz/stop":
                 return this.ok();
             default:
                 return this.error(49999, "Data exception");

@@ -88,6 +88,10 @@ export class MockGateway implements CameraGateway {
         throw new GatewayError("unsupported", "Live tidak tersedia pada data contoh");
     }
 
+    async ptz(ref: DeviceRef): Promise<void> {
+        if (this.find(ref).camera.status === "OFFLINE") throw new GatewayError("offline", "Kamera offline");
+    }
+
     async listRecordings(ref: DeviceRef, range: RecordingRange): Promise<RecordingRange[]> {
         const { camera } = this.find(ref);
         if (camera.sdStatus === "NONE" || camera.sdStatus === "UNREADABLE") return [];

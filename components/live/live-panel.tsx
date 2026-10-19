@@ -1,11 +1,27 @@
 "use client";
 
 import Hls from "hls.js";
-import { Camera, Maximize, Pause, Play, Video, WifiOff } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+    Camera,
+    Circle,
+    Maximize,
+    Mic,
+    Move,
+    Pause,
+    Play,
+    Square,
+    Video,
+    Volume2,
+    VolumeX,
+    WifiOff,
+    ZoomIn,
+    type LucideIcon,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { EzopenPlayer, type EzopenAccess } from "./ezopen-player";
+import { EzopenPlayer, type EzopenAccess, type EzopenControls, type TalkChange } from "./ezopen-player";
+import { PtzPad } from "./ptz-pad";
 import { takeSnapshot } from "./snapshot-button";
 
 const AUTO_STOP_SECONDS = 180;
@@ -84,6 +100,49 @@ function PlaybackPlaceholder() {
 }
 
 type StreamState = "idle" | "loading" | "playing" | "error";
+type TalkState = "off" | "connecting" | "on";
+
+function ControlButton({
+    label,
+    icon: Icon,
+    active = false,
+    tone = "default",
+    onClick,
+    children,
+}: {
+    label: string;
+    icon?: LucideIcon;
+    active?: boolean;
+    /** "alert": merah saat aktif (mic/rekam), agar jelas sedang berjalan */
+    tone?: "default" | "alert";
+    onClick: () => void;
+    children?: ReactNode;
+}) {
+    return (
+        <button
+            type="button"
+            aria-label={label}
+            title={label}
+            aria-pressed={active}
+            onClick={(e) => {
+                e.stopPropagation();
+                onClick();
+            }}
+            className={cn(
+                "flex h-6 min-w-6 items-center justify-center rounded-md text-white transition-colors @xl:h-8 @xl:min-w-8",
+                active ? (tone === "alert" ? "bg-alert-badge" : "bg-white/25") : "hover:bg-white/14",
+            )}
+        >
+            {Icon ? (
+                <Icon className={cn("size-[17px] lg:size-4", active && tone === "alert" && "animate-pulse")} />
+            ) : (
+                children
+            )}
+        </button>
+    );
+}
+
+const fileStamp = () => new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
 
 function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMessage: string | null }) {
     const offline = blockedMessage !== null;
@@ -98,6 +157,28 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
     const [clock, setClock] = useState<string | null>(null);
     const [ezopen, setEzopen] = useState<EzopenAccess | null>(null);
     const playing = streamState === "playing";
+
+    // Kontrol live: suara/mic/zoom/rekam lewat player ezopen; PTZ lewat server (juga untuk HLS).
+    const controls = useRef<EzopenControls>(null);
+    const [hd, setHd] = useState(false);
+    const [sound, setSound] = useState(false);
+    const [talk, setTalk] = useState<TalkState>("off");
+    const [zoom, setZoom] = useState(false);
+    const [recording, setRecording] = useState(false);
+    const [ptzOpen, setPtzOpen] = useState(false);
+    const ezopenControls = playing && ezopen !== null;
+    // stopStream juga dipanggil dari interval auto-stop (closure lama), jadi baca status terbaru lewat ref.
+    const liveFlags = useRef({ recording, talk });
+    useEffect(() => {
+        liveFlags.current = { recording, talk };
+    });
+
+    function resetControls() {
+        setSound(false);
+        setTalk("off");
+        setZoom(false);
+        setRecording(false);
+    }
 
     // Jam real-time
     useEffect(() => {
@@ -141,15 +222,19 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
         }
     }
 
-    async function startStream() {
+    async function startStream(highQuality = hd) {
         if (offline) return;
         setStreamState("loading");
         setStreamError(null);
         setWatched(0);
         setRemaining(AUTO_STOP_SECONDS);
+        resetControls();
 
         try {
-            const res = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/live`, { method: "POST" });
+            const res = await fetch(
+                `/api/cameras/${encodeURIComponent(cameraId)}/live${highQuality ? "?quality=1" : ""}`,
+                { method: "POST" },
+            );
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}));
                 throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -219,6 +304,11 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
 
     function stopStream() {
         destroyHls();
+        // Simpan klip yang sedang direkam dan matikan mic sebelum player dibongkar.
+        if (liveFlags.current.recording) void controls.current?.stopRecording().catch(() => {});
+        if (liveFlags.current.talk !== "off") controls.current?.stopTalk();
+        resetControls();
+        setPtzOpen(false);
         setEzopen(null);
         const video = videoRef.current;
         if (video) {
@@ -243,6 +333,76 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
         fetch(`/api/cameras/${encodeURIComponent(cameraId)}/live`, { method: "PATCH" }).catch(() => {});
     }, [playing, cameraId]);
 
+    async function toggleSound() {
+        const next = !sound;
+        try {
+            await controls.current?.setSound(next);
+            setSound(next);
+        } catch {
+            toast.error("Gagal mengubah suara");
+        }
+    }
+
+    function toggleTalk() {
+        if (talk !== "off") {
+            controls.current?.stopTalk();
+            setTalk("off");
+            return;
+        }
+        if (!window.isSecureContext) {
+            toast.error("Bicara lewat mikrofon butuh koneksi HTTPS");
+            return;
+        }
+        setTalk("connecting");
+        controls.current?.startTalk();
+    }
+
+    function onTalkChange(change: TalkChange) {
+        if (change.state === "on") {
+            setTalk("on");
+            toast.success("Mikrofon aktif, suara Anda terdengar di kamera");
+        } else if (change.state === "off") {
+            setTalk("off");
+        } else {
+            setTalk("off");
+            toast.error(`Bicara gagal: ${change.message}`);
+        }
+    }
+
+    async function toggleZoom() {
+        const next = !zoom;
+        try {
+            await controls.current?.setZoom(next);
+            setZoom(next);
+            if (next) toast.info("Zoom digital aktif: gulir atau cubit pada video untuk memperbesar");
+        } catch {
+            toast.error("Gagal mengubah zoom");
+        }
+    }
+
+    async function toggleRecording() {
+        try {
+            if (recording) {
+                await controls.current?.stopRecording();
+                setRecording(false);
+                toast.success("Klip disimpan ke folder unduhan");
+            } else {
+                await controls.current?.startRecording(`kamera-${cameraId}-${fileStamp()}`);
+                setRecording(true);
+            }
+        } catch {
+            setRecording(false);
+            toast.error("Gagal merekam klip");
+        }
+    }
+
+    // Ganti kualitas = minta alamat .hd.live / .live baru, player dipasang ulang.
+    function toggleHd() {
+        const next = !hd;
+        setHd(next);
+        void startStream(next);
+    }
+
     // Auto-mulai saat komponen mount (kalau kamera online)
     useEffect(() => {
         if (!offline) {
@@ -257,7 +417,7 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
             ref={containerRef}
             onPointerMove={touch}
             onClick={touch}
-            className="relative h-[219px] overflow-hidden bg-[#1b1f26] lg:h-[430px] lg:rounded-xl"
+            className="@container relative h-[219px] overflow-hidden bg-[#1b1f26] lg:h-[430px] lg:rounded-xl"
         >
             {/* Video element — selalu ada di DOM agar HLS bisa attach */}
             <video
@@ -274,6 +434,8 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
             {ezopen && (
                 <EzopenPlayer
                     access={ezopen}
+                    controlsRef={controls}
+                    onTalkChange={onTalkChange}
                     onPlaying={() => setStreamState("playing")}
                     onError={(msg) => {
                         setEzopen(null);
@@ -329,7 +491,7 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
 
             {/* Timestamp */}
             {clock && (
-                <span className="absolute top-3 left-[60px] hidden rounded-sm bg-[#0b0d11]/55 px-1.5 py-[3px] font-mono text-[11px] font-medium text-white backdrop-blur-[4px] lg:block">
+                <span className="absolute top-2.5 left-[52px] hidden @min-[22rem]:block rounded-sm bg-[#0b0d11]/55 px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-white backdrop-blur-[4px] lg:top-3 lg:left-[60px] lg:py-[3px] lg:text-[11px]">
                     {clock}
                 </span>
             )}
@@ -337,10 +499,19 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
             {/* Auto-stop countdown */}
             {playing && (
                 <span className="absolute top-2.5 right-2.5 flex items-center gap-1.5 rounded-md bg-[#0b0d11]/55 px-2 py-[3px] text-[11px] font-medium whitespace-nowrap text-white/80 backdrop-blur-[6px] lg:top-3 lg:right-3 lg:px-2.5 lg:py-[5px] lg:text-xs">
-                    <span className="lg:hidden">Berhenti dalam</span>
-                    <span className="hidden lg:inline">Berhenti otomatis dalam</span>
+                    <span className="@xl:hidden">Berhenti dalam</span>
+                    <span className="hidden @xl:inline">Berhenti otomatis dalam</span>
                     <span className="font-mono text-white">{mmss(remaining)}</span>
                 </span>
+            )}
+
+            {/* D-pad PTZ */}
+            {playing && ptzOpen && (
+                <PtzPad
+                    cameraId={cameraId}
+                    onInteract={touch}
+                    className="absolute top-1/2 right-2.5 -translate-y-[60%] lg:right-4"
+                />
             )}
 
             {/* Control bar */}
@@ -358,26 +529,59 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
                     >
                         {playing ? <Pause className="size-4 lg:size-[15px]" /> : <Play className="size-4 fill-white lg:size-[15px]" />}
                     </button>
-                    <span className="font-mono text-[11px] font-medium text-white/85 lg:hidden">{clock}</span>
-                    <span className="hidden text-[12.5px] font-medium text-white/85 lg:inline">
+                    <span className="hidden text-[12.5px] font-medium text-white/85 @xl:inline">
                         Ditonton {mmss(watched)}
                     </span>
                 </div>
-                <div className="flex items-center gap-3.5 lg:gap-1">
-                    <button
-                        aria-label="Ambil snapshot"
-                        onClick={(e) => { e.stopPropagation(); void takeSnapshot(cameraId); }}
-                        className="flex items-center justify-center text-white lg:size-8"
-                    >
-                        <Camera className="size-[17px] lg:size-4" />
-                    </button>
-                    <button
-                        aria-label="Layar penuh"
-                        onClick={(e) => { e.stopPropagation(); containerRef.current?.requestFullscreen?.(); }}
-                        className="flex items-center justify-center text-white lg:size-8"
-                    >
-                        <Maximize className="size-[17px] lg:size-4" />
-                    </button>
+                <div className="flex items-center gap-1.5 @xl:gap-1">
+                    {ezopenControls && (
+                        <>
+                            <ControlButton
+                                label={sound ? "Matikan suara" : "Nyalakan suara"}
+                                icon={sound ? Volume2 : VolumeX}
+                                active={sound}
+                                onClick={toggleSound}
+                            />
+                            <ControlButton
+                                label={talk === "off" ? "Bicara lewat mikrofon" : "Hentikan mikrofon"}
+                                icon={Mic}
+                                active={talk !== "off"}
+                                tone="alert"
+                                onClick={toggleTalk}
+                            />
+                            <ControlButton label="Zoom digital" icon={ZoomIn} active={zoom} onClick={toggleZoom} />
+                            <ControlButton
+                                label={recording ? "Hentikan & simpan klip" : "Rekam klip"}
+                                icon={recording ? Square : Circle}
+                                active={recording}
+                                tone="alert"
+                                onClick={toggleRecording}
+                            />
+                            <ControlButton
+                                label={hd ? "Kualitas HD (klik untuk hemat data)" : "Kualitas hemat data (klik untuk HD)"}
+                                active={hd}
+                                onClick={toggleHd}
+                            >
+                                <span className="px-0.5 text-[10.5px] font-bold tracking-wide lg:text-[11px]">
+                                    {hd ? "HD" : "SD"}
+                                </span>
+                            </ControlButton>
+                        </>
+                    )}
+                    {playing && (
+                        <ControlButton
+                            label={ptzOpen ? "Tutup kontrol putar" : "Putar kamera (PTZ)"}
+                            icon={Move}
+                            active={ptzOpen}
+                            onClick={() => setPtzOpen((v) => !v)}
+                        />
+                    )}
+                    <ControlButton label="Ambil snapshot" icon={Camera} onClick={() => void takeSnapshot(cameraId)} />
+                    <ControlButton
+                        label="Layar penuh"
+                        icon={Maximize}
+                        onClick={() => containerRef.current?.requestFullscreen?.()}
+                    />
                 </div>
             </div>
         </div>

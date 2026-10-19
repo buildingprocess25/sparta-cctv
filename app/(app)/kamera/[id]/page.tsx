@@ -16,6 +16,7 @@ const RECORDINGS_NOTE: Record<GatewayErrorKind, string> = {
     offline: "Rekaman tidak dapat dimuat: kamera offline.",
     not_found: "Rekaman belum tersedia: serial perangkat belum terdaftar.",
     unsupported: "Perangkat ini tidak mendukung daftar rekaman.",
+    ptz_limit: "Rekaman gagal dimuat. Coba muat ulang halaman.", // tidak terjadi untuk daftar rekaman
     rate_limited: "Batas panggilan EZVIZ tercapai. Coba lagi beberapa saat.",
     transient: "Rekaman gagal dimuat. Coba muat ulang halaman.",
 };

@@ -95,6 +95,13 @@ Semua isi di bawah **bersumber dari dokumentasi**, kecuali yang ditandai ⚠️ 
 - Kode (dalam `meta`/HTTP): `2003` perangkat offline, `2007` nomor perangkat salah, `2009` timeout, `2030`/`20015` tidak didukung, `10002` (HTTP 401) token kedaluwarsa.
 - Implikasi: segmen asli menggantikan `deriveRecordings` di `lib/monitoring.ts`. ⚠️ Zona waktu string waktu tidak disebut (kemungkinan waktu lokal perangkat); verifikasi dengan kamera asli. Konversi ke menit-sejak-00:00 WIB untuk timeline.
 
+## 6b. PTZ (pan/tilt) — `device/ptz/start` dan `device/ptz/stop`
+- Parameter: `accessToken`, `deviceSerial`, `channelNo`, `direction` (0 atas, 1 bawah, 2 kiri, 3 kanan, 4–7 diagonal, 8/9 zoom optik masuk/keluar, 10/11 fokus), `speed` (0 lambat, 1 sedang, 2 cepat). `stop` tanpa `direction` = hentikan semua.
+- Kamera terus bergerak sampai `stop` → klien wajib mengirim stop saat tombol dilepas (lihat `components/live/ptz-pad.tsx`).
+- Kode: `60000` tidak mendukung PTZ, `60002`–`60005` batas putar atas/bawah/kiri/kanan (dipetakan ke `ptz_limit`, bukan kegagalan), `60006` operasi gagal (transient), `60020` perintah tidak didukung.
+- ⚠️ Sumber: daftar arah/kecepatan dari halaman pihak ketiga EZVIZ-Open (`clawhub.ai/Ezviz-Open/ezviz-open-ptz-control`) dan kode 6000x dari ingatan dokumentasi; verifikasi dengan EB8 asli.
+- EB8 tidak punya zoom optik → zoom di UI memakai zoom digital EZUIKit (`enableZoom`), bukan arah 8/9.
+
 ## 7. Penambahan perangkat (opsional, tidak dipakai di tahap awal)
 - `device/add` (`deviceSerial` + `validateCode` 6 huruf kapital di badan kamera), `device/delete`, `device/name/update`.
 - Kode: `20013` perangkat sudah ditambahkan akun lain, `20017` sudah ada di akun ini, `20010` kode verifikasi salah.
