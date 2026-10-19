@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { formatEzvizTime, parseEzvizTime, startOfDayWib } from "./time";
+import { formatEzopenTime, formatEzvizTime, parseEzvizTime, parseWibDateKey, startOfDayWib, wibDateKey } from "./time";
 
 describe("waktu EZVIZ (WIB)", () => {
     it("format: UTC 08:00 → 15:00 WIB", () => {
@@ -29,5 +29,21 @@ describe("waktu EZVIZ (WIB)", () => {
         assert.equal(startOfDayWib(new Date("2026-10-15T08:00:00Z")).toISOString(), "2026-10-14T17:00:00.000Z");
         // 23:30 UTC sudah hari berikutnya di WIB
         assert.equal(startOfDayWib(new Date("2026-10-14T23:30:00Z")).toISOString(), "2026-10-14T17:00:00.000Z");
+    });
+});
+
+describe("waktu ezopen & kunci tanggal (WIB)", () => {
+    it("formatEzopenTime: yyyyMMddHHmmss dalam WIB", () => {
+        assert.equal(formatEzopenTime(new Date("2026-10-19T08:05:09Z")), "20261019150509");
+    });
+
+    it("wibDateKey mengikuti tanggal WIB, bukan UTC", () => {
+        assert.equal(wibDateKey(new Date("2026-10-18T18:00:00Z")), "2026-10-19");
+    });
+
+    it("parseWibDateKey: 00:00 WIB; format/tanggal salah → null", () => {
+        assert.equal(parseWibDateKey("2026-10-19")?.toISOString(), "2026-10-18T17:00:00.000Z");
+        assert.equal(parseWibDateKey("19-10-2026"), null);
+        assert.equal(parseWibDateKey("2026-02-30"), null);
     });
 });

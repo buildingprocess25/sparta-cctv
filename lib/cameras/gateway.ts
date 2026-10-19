@@ -49,7 +49,7 @@ export type LiveStream = {
  * membalas segmen "/ErrCode/..." — sedangkan protokol ezopen dapat membangunkan perangkat.
  */
 export type PlayerAccess = {
-    /** ezopen://open.ezviz.com/<serial>/<channel>.live (atau .hd.live) */
+    /** ezopen://open.ezviz.com/<serial>/<channel>.live (atau .hd.live, atau .rec?begin=…&end=… untuk playback) */
     url: string;
     accessToken: string;
     /** domain API wilayah akun, untuk opsi env.domain EZUIKit */
@@ -59,6 +59,13 @@ export type PlayerAccess = {
 export type PtzMove = "up" | "down" | "left" | "right";
 
 export type PtzCommand = { action: "start"; move: PtzMove } | { action: "stop" };
+
+export type PlayerAccessOptions = {
+    /** 2 = sub-stream (bawaan); 1 = HD. Hanya untuk live. */
+    quality?: 1 | 2;
+    /** bila diisi → putar rekaman MicroSD pada rentang ini (`.rec`), bukan live */
+    playback?: RecordingRange;
+};
 
 export interface CameraGateway {
     readonly kind: "mock" | "ezviz";
@@ -75,7 +82,7 @@ export interface CameraGateway {
     stopLive(ref: DeviceRef, streamId: string): Promise<void>;
 
     /** Kredensial player ezopen; token ini SAMPAI ke browser (lihat catatan keamanan di route live). */
-    getPlayerAccess(ref: DeviceRef, options?: { quality?: 1 | 2 }): Promise<PlayerAccess>;
+    getPlayerAccess(ref: DeviceRef, options?: PlayerAccessOptions): Promise<PlayerAccess>;
 
     /** Gerak pan/tilt. "start" bergerak terus sampai "stop" atau batas putar (error ptz_limit). */
     ptz(ref: DeviceRef, command: PtzCommand): Promise<void>;

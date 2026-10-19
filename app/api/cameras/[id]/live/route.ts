@@ -1,5 +1,7 @@
 import { getDataSource, getGateway } from "@/lib/cameras";
 import { isGatewayError } from "@/lib/cameras/errors";
+import type { RecordingRange } from "@/lib/cameras/gateway";
+import { wibDateKey } from "@/lib/ezviz/time";
 import { findConflict } from "@/lib/live-limiter";
 import { addLiveSeconds, liveSecondsOf } from "@/lib/live-usage";
 import { getCameraDetail } from "@/lib/monitoring";
@@ -15,6 +17,20 @@ function liveProtocol(): "ezopen" | "hls" {
 
 type Prisma = (typeof import("@/lib/prisma"))["default"];
 
+// ?begin=<ISO>&end=<ISO> → playback rekaman MicroSD. Rentang harus di hari WIB yang sama (syarat
+// EZUIKit) dan sudah dimulai. Tanpa keduanya → live.
+function parsePlayback(params: URLSearchParams): RecordingRange | null | "invalid" {
+    const begin = params.get("begin");
+    const end = params.get("end");
+    if (!begin && !end) return null;
+    const start = new Date(begin ?? "");
+    const stop = new Date(end ?? "");
+    if (Number.isNaN(start.getTime()) || Number.isNaN(stop.getTime())) return "invalid";
+    if (start >= stop || start.getTime() > Date.now()) return "invalid";
+    if (wibDateKey(start) !== wibDateKey(new Date(stop.getTime() - 1000))) return "invalid";
+    return { start, end: stop };
+}
+
 // Tutup semua sesi terbuka kamera ini dan catat detik pemakaiannya.
 async function closeSessions(prisma: Prisma, accountId: string, cameraId: string) {
     const now = new Date();
@@ -25,15 +41,21 @@ async function closeSessions(prisma: Prisma, accountId: string, cameraId: string
     await addLiveSeconds(accountId, seconds, now).catch((e) => console.error("[live] catat usage gagal:", e));
 }
 
-// POST /api/cameras/[id]/live — mulai sesi live.
+// POST /api/cameras/[id]/live — mulai sesi live (atau playback MicroSD dengan ?begin=&end=).
+// Live dan playback berbagi pembatas 1 sesi per akun, heartbeat PATCH, dan DELETE.
 // Balasan: { kind: "ezopen", url, accessToken, domain, expiresAt } atau { kind: "hls", url, expiresAt }.
 // KEAMANAN (mode ezopen): accessToken akun kontraktor dikirim ke browser karena EZUIKit memerlukannya.
 // Wajib di balik auth/proxy sebelum production (docs/ezviz-integration-plan.md §9); idealnya diganti
 // token sub-akun (RAM) yang dibatasi ke perangkat ini.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
+    const search = new URL(req.url).searchParams;
     // ?quality=1 (HD) atau 2 (sub-stream, bawaan); berguna untuk menguji kamera yang gagal di sub-stream.
-    const quality = new URL(req.url).searchParams.get("quality") === "1" ? 1 : 2;
+    const quality = search.get("quality") === "1" ? 1 : 2;
+    const playback = parsePlayback(search);
+    if (playback === "invalid") {
+        return Response.json({ error: "Rentang waktu rekaman tidak valid" }, { status: 400 });
+    }
 
     if (getDataSource() !== "ezviz") {
         return Response.json({ error: "Mode ezviz tidak aktif" }, { status: 503 });
@@ -78,7 +100,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     if (liveProtocol() === "ezopen") {
         try {
-            const access = await getGateway().getPlayerAccess(ref, { quality });
+            const access = await getGateway().getPlayerAccess(ref, { quality, playback: playback ?? undefined });
             const expiresAt = new Date(Date.now() + LIVE_EXPIRE_SECONDS * 1000);
             try {
                 const { default: prisma } = await import("@/lib/prisma");
@@ -99,6 +121,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             console.error("[live] getPlayerAccess error:", error);
             return Response.json({ error: "Gagal menyiapkan live" }, { status: 502 });
         }
+    }
+
+    // Heartbeat PATCH memperbarui alamat HLS sebagai live, jadi playback HLS belum didukung.
+    if (playback) {
+        return Response.json({ error: "Playback hanya tersedia dengan player ezopen" }, { status: 501 });
     }
 
     try {

@@ -5,21 +5,11 @@ import { STATUS_META } from "@/components/dashboard/camera-tile";
 import { ConnectionSection, DeviceSection, SdSection, StoreSection } from "@/components/live/info-sections";
 import { LivePanel } from "@/components/live/live-panel";
 import { PlaybackCard } from "@/components/live/playback-card";
+import { PlaybackProvider } from "@/components/live/playback-context";
 import { SnapshotButton } from "@/components/live/snapshot-button";
-import { formatDateChip, formatDayMonth } from "@/lib/format";
-import type { GatewayErrorKind } from "@/lib/cameras/errors";
+import { wibDateKey } from "@/lib/ezviz/time";
 import { getCameraDetail } from "@/lib/monitoring";
 import { cn } from "@/lib/utils";
-
-const RECORDINGS_NOTE: Record<GatewayErrorKind, string> = {
-    account_unavailable: "Rekaman tidak dapat dimuat: akun EZVIZ kontraktor bermasalah.",
-    offline: "Rekaman tidak dapat dimuat: kamera offline.",
-    not_found: "Rekaman belum tersedia: serial perangkat belum terdaftar.",
-    unsupported: "Perangkat ini tidak mendukung daftar rekaman.",
-    ptz_limit: "Rekaman gagal dimuat. Coba muat ulang halaman.", // tidak terjadi untuk daftar rekaman
-    rate_limited: "Batas panggilan EZVIZ tercapai. Coba lagi beberapa saat.",
-    transient: "Rekaman gagal dimuat. Coba muat ulang halaman.",
-};
 
 const BLOCKED_MESSAGE = {
     OFFLINE: (label: string) => `Kamera offline · ${label}`,
@@ -34,9 +24,7 @@ export default async function LiveViewPage({ params }: { params: Promise<{ id: s
     const { camera, store } = detail;
     const status = STATUS_META[camera.status];
     const title = `${camera.label} · ${camera.area}`;
-    const now = new Date();
-    const shortDate = formatDayMonth(now);
-    const dateLabel = formatDateChip(now);
+    const todayKey = wibDateKey(new Date());
 
     return (
         <div className="flex flex-col lg:gap-5 lg:px-7 lg:pt-5 lg:pb-8">
@@ -77,6 +65,7 @@ export default async function LiveViewPage({ params }: { params: Promise<{ id: s
 
             <div className="flex flex-col gap-4 pb-8 lg:grid lg:grid-cols-[minmax(0,1fr)_352px] lg:items-start lg:gap-5 lg:pb-0">
                 <div className="contents lg:flex lg:flex-col lg:gap-3">
+                    <PlaybackProvider>
                     <LivePanel
                         cameraId={camera.id}
                         blockedMessage={
@@ -89,13 +78,14 @@ export default async function LiveViewPage({ params }: { params: Promise<{ id: s
                     />
                     <div className="px-4 max-lg:order-4 lg:px-0">
                         <PlaybackCard
-                            recordings={detail.recordings}
-                            nowMinutes={detail.nowMinutes}
-                            dateLabel={dateLabel}
-                            shortDateLabel={shortDate}
-                            note={detail.recordingsError ? RECORDINGS_NOTE[detail.recordingsError] : null}
+                            cameraId={camera.id}
+                            todayKey={todayKey}
+                            initialRecordings={detail.recordings}
+                            initialError={detail.recordingsError}
+                            initialNowMinutes={detail.nowMinutes}
                         />
                     </div>
+                    </PlaybackProvider>
                 </div>
                 <aside className="flex flex-col gap-4 px-4 max-lg:contents lg:rounded-xl lg:border lg:bg-card lg:px-5 lg:py-1">
                     <ConnectionSection detail={detail} className="max-lg:order-2 max-lg:mx-4" />

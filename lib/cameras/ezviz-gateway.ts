@@ -11,7 +11,7 @@ import {
     UnsupportedError,
 } from "@/lib/ezviz/errors";
 import { mapDeviceStatus, mapSdStatus, type SdStatusValue } from "@/lib/ezviz/mappers";
-import { formatEzvizTime, parseEzvizTime } from "@/lib/ezviz/time";
+import { formatEzopenTime, formatEzvizTime, parseEzvizTime } from "@/lib/ezviz/time";
 import type { TokenManager } from "@/lib/ezviz/token-manager";
 import { GatewayError, isGatewayError } from "./errors";
 import type {
@@ -20,6 +20,7 @@ import type {
     DeviceRef,
     LiveStream,
     PlayerAccess,
+    PlayerAccessOptions,
     PtzCommand,
     PtzMove,
     RecordingRange,
@@ -159,10 +160,15 @@ export class EzvizGateway implements CameraGateway {
         return { id: live.id, url: live.url, expiresAt };
     }
 
-    async getPlayerAccess(ref: DeviceRef, options: { quality?: 1 | 2 } = {}): Promise<PlayerAccess> {
+    async getPlayerAccess(ref: DeviceRef, options: PlayerAccessOptions = {}): Promise<PlayerAccess> {
         const r = resolve(ref);
         const { accessToken, areaDomain } = await this.call(r.accountId, async (ctx) => ctx);
-        const suffix = options.quality === 1 ? "hd.live" : "live";
+        // Playback MicroSD: begin/end dalam waktu lokal perangkat (WIB), format yyyyMMddHHmmss.
+        const suffix = options.playback
+            ? `rec?begin=${formatEzopenTime(options.playback.start)}&end=${formatEzopenTime(options.playback.end)}`
+            : options.quality === 1
+              ? "hd.live"
+              : "live";
         return {
             url: `ezopen://open.ezviz.com/${r.deviceSerial}/${r.channelNo}.${suffix}`,
             accessToken,

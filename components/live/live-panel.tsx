@@ -21,6 +21,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { EzopenPlayer, type EzopenAccess, type EzopenControls, type TalkChange } from "./ezopen-player";
+import { usePlayback, type PlaybackRange } from "./playback-context";
 import { PtzPad } from "./ptz-pad";
 import { takeSnapshot } from "./snapshot-button";
 
@@ -44,8 +45,14 @@ function formatClock(date: Date) {
     return `${get("day")}/${get("month")} ${get("hour")}:${get("minute")}:${get("second")}`;
 }
 
+/** "19/10 15:00–16:00" */
+function formatRange({ start, end }: PlaybackRange) {
+    const [day, from] = formatClock(start).split(" ");
+    return `${day} ${from.slice(0, 5)}–${formatClock(end).split(" ")[1].slice(0, 5)}`;
+}
+
 export function LivePanel({ cameraId, blockedMessage }: { cameraId: string; blockedMessage: string | null }) {
-    const [tab, setTab] = useState<"live" | "playback">("live");
+    const { tab, setTab, range } = usePlayback();
 
     return (
         <div className="flex flex-col lg:gap-3">
@@ -71,6 +78,14 @@ export function LivePanel({ cameraId, blockedMessage }: { cameraId: string; bloc
             <div className="max-lg:order-1 lg:contents">
                 {tab === "live" ? (
                     <LivePlayer cameraId={cameraId} blockedMessage={blockedMessage} />
+                ) : range ? (
+                    // key: rentang baru → player dipasang ulang dengan alamat .rec baru
+                    <LivePlayer
+                        key={`${range.start.getTime()}-${range.end.getTime()}`}
+                        cameraId={cameraId}
+                        blockedMessage={blockedMessage}
+                        playback={range}
+                    />
                 ) : (
                     <PlaybackPlaceholder />
                 )}
@@ -78,10 +93,10 @@ export function LivePanel({ cameraId, blockedMessage }: { cameraId: string; bloc
 
             <p className="px-4 pt-4 text-xs font-medium text-subtle max-lg:order-3 lg:px-0 lg:pt-0">
                 <span className="hidden lg:inline">
-                    Untuk menghemat kuota 4G kamera, live stream berhenti otomatis setelah 3 menit tanpa interaksi.
+                    Untuk menghemat kuota 4G kamera, live dan playback berhenti otomatis setelah 3 menit tanpa interaksi.
                 </span>
                 <span className="lg:hidden">
-                    Live berhenti otomatis setelah 3 menit tanpa interaksi untuk menghemat kuota 4G.
+                    Live dan playback berhenti otomatis setelah 3 menit tanpa interaksi untuk menghemat kuota 4G.
                 </span>
             </p>
         </div>
@@ -93,7 +108,7 @@ function PlaybackPlaceholder() {
         <div className="flex h-[219px] flex-col items-center justify-center gap-2 bg-[#1b1f26] lg:h-[430px] lg:rounded-xl">
             <Video className="size-7 text-white/40" />
             <p className="text-xs font-medium text-white/40">
-                Pilih tanggal dan rentang jam pada Rekaman MicroSD
+                Pilih tanggal dan jam pada Rekaman MicroSD, lalu klik Putar rekaman
             </p>
         </div>
     );
@@ -144,8 +159,18 @@ function ControlButton({
 
 const fileStamp = () => new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
 
-function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMessage: string | null }) {
+function LivePlayer({
+    cameraId,
+    blockedMessage,
+    playback,
+}: {
+    cameraId: string;
+    blockedMessage: string | null;
+    /** bila diisi → putar rekaman MicroSD rentang ini (tanpa mic, PTZ, HD, snapshot) */
+    playback?: PlaybackRange;
+}) {
     const offline = blockedMessage !== null;
+    const isLive = !playback;
     const containerRef = useRef<HTMLDivElement>(null);
     const videoRef = useRef<HTMLVideoElement>(null);
     const hlsRef = useRef<Hls | null>(null);
@@ -230,11 +255,13 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
         setRemaining(AUTO_STOP_SECONDS);
         resetControls();
 
+        const query = playback
+            ? `?begin=${encodeURIComponent(playback.start.toISOString())}&end=${encodeURIComponent(playback.end.toISOString())}`
+            : highQuality
+              ? "?quality=1"
+              : "";
         try {
-            const res = await fetch(
-                `/api/cameras/${encodeURIComponent(cameraId)}/live${highQuality ? "?quality=1" : ""}`,
-                { method: "POST" },
-            );
+            const res = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/live${query}`, { method: "POST" });
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}));
                 throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -253,7 +280,7 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
             const msg = error instanceof Error ? error.message : "Gagal memulai stream";
             setStreamError(msg);
             setStreamState("error");
-            toast.error(`Live stream gagal: ${msg}`);
+            toast.error(`${playback ? "Playback" : "Live stream"} gagal: ${msg}`);
         }
     }
 
@@ -456,7 +483,9 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
                     ) : streamState === "loading" ? (
                         <>
                             <div className="size-8 animate-spin rounded-full border-2 border-white/20 border-t-white/70" />
-                            <p className="text-[11px] font-medium text-white/50">Menghubungkan ke kamera…</p>
+                            <p className="text-[11px] font-medium text-white/50">
+                                {playback ? "Memuat rekaman dari MicroSD…" : "Menghubungkan ke kamera…"}
+                            </p>
                         </>
                     ) : streamState === "error" ? (
                         <>
@@ -476,21 +505,30 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
                             className="flex items-center gap-2 rounded-lg border border-white/25 bg-white/15 px-4 py-2 text-[13px] font-semibold text-white hover:bg-white/25"
                         >
                             <Play className="size-3.5 fill-white" />
-                            Lanjutkan live
+                            {playback ? "Putar lagi" : "Lanjutkan live"}
                         </button>
                     )}
                 </div>
             )}
 
-            {/* Badge LIVE */}
+            {/* Badge LIVE / REKAMAN */}
             {playing && (
-                <span className="absolute top-2.5 left-2.5 rounded-sm bg-alert-badge px-[7px] py-0.5 text-[10.5px] font-bold tracking-[0.06em] text-white lg:top-3 lg:left-3 lg:px-2 lg:py-[3px] lg:text-[11px]">
-                    LIVE
+                <span
+                    className={cn(
+                        "absolute top-2.5 left-2.5 rounded-sm px-[7px] py-0.5 text-[10.5px] font-bold tracking-[0.06em] text-white lg:top-3 lg:left-3 lg:px-2 lg:py-[3px] lg:text-[11px]",
+                        playback ? "bg-primary" : "bg-alert-badge",
+                    )}
+                >
+                    {playback ? "REKAMAN" : "LIVE"}
                 </span>
             )}
 
-            {/* Timestamp */}
-            {clock && (
+            {/* Timestamp (live) / rentang rekaman (playback) */}
+            {playback ? (
+                <span className="absolute top-2.5 left-[88px] hidden @min-[22rem]:block rounded-sm bg-[#0b0d11]/55 px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-white backdrop-blur-[4px] lg:top-3 lg:left-[100px] lg:py-[3px] lg:text-[11px]">
+                    {formatRange(playback)}
+                </span>
+            ) : clock && (
                 <span className="absolute top-2.5 left-[52px] hidden @min-[22rem]:block rounded-sm bg-[#0b0d11]/55 px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-white backdrop-blur-[4px] lg:top-3 lg:left-[60px] lg:py-[3px] lg:text-[11px]">
                     {clock}
                 </span>
@@ -542,13 +580,15 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
                                 active={sound}
                                 onClick={toggleSound}
                             />
-                            <ControlButton
-                                label={talk === "off" ? "Bicara lewat mikrofon" : "Hentikan mikrofon"}
-                                icon={Mic}
-                                active={talk !== "off"}
-                                tone="alert"
-                                onClick={toggleTalk}
-                            />
+                            {isLive && (
+                                <ControlButton
+                                    label={talk === "off" ? "Bicara lewat mikrofon" : "Hentikan mikrofon"}
+                                    icon={Mic}
+                                    active={talk !== "off"}
+                                    tone="alert"
+                                    onClick={toggleTalk}
+                                />
+                            )}
                             <ControlButton label="Zoom digital" icon={ZoomIn} active={zoom} onClick={toggleZoom} />
                             <ControlButton
                                 label={recording ? "Hentikan & simpan klip" : "Rekam klip"}
@@ -557,18 +597,20 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
                                 tone="alert"
                                 onClick={toggleRecording}
                             />
-                            <ControlButton
-                                label={hd ? "Kualitas HD (klik untuk hemat data)" : "Kualitas hemat data (klik untuk HD)"}
-                                active={hd}
-                                onClick={toggleHd}
-                            >
-                                <span className="px-0.5 text-[10.5px] font-bold tracking-wide lg:text-[11px]">
-                                    {hd ? "HD" : "SD"}
-                                </span>
-                            </ControlButton>
+                            {isLive && (
+                                <ControlButton
+                                    label={hd ? "Kualitas HD (klik untuk hemat data)" : "Kualitas hemat data (klik untuk HD)"}
+                                    active={hd}
+                                    onClick={toggleHd}
+                                >
+                                    <span className="px-0.5 text-[10.5px] font-bold tracking-wide lg:text-[11px]">
+                                        {hd ? "HD" : "SD"}
+                                    </span>
+                                </ControlButton>
+                            )}
                         </>
                     )}
-                    {playing && (
+                    {playing && isLive && (
                         <ControlButton
                             label={ptzOpen ? "Tutup kontrol putar" : "Putar kamera (PTZ)"}
                             icon={Move}
@@ -576,7 +618,9 @@ function LivePlayer({ cameraId, blockedMessage }: { cameraId: string; blockedMes
                             onClick={() => setPtzOpen((v) => !v)}
                         />
                     )}
-                    <ControlButton label="Ambil snapshot" icon={Camera} onClick={() => void takeSnapshot(cameraId)} />
+                    {isLive && (
+                        <ControlButton label="Ambil snapshot" icon={Camera} onClick={() => void takeSnapshot(cameraId)} />
+                    )}
                     <ControlButton
                         label="Layar penuh"
                         icon={Maximize}

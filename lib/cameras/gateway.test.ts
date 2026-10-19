@@ -233,6 +233,18 @@ describe("EzvizGateway", () => {
         assert.equal(await kindOf(ezviz.ptz(ref, { action: "start", move: "up" })), "unsupported");
     });
 
+    it("getPlayerAccess: live sub-stream, live HD, dan playback .rec dengan waktu WIB", async () => {
+        assert.equal((await ezviz.getPlayerAccess(ref)).url, "ezopen://open.ezviz.com/D1/1.live");
+        assert.equal((await ezviz.getPlayerAccess(ref, { quality: 1 })).url, "ezopen://open.ezviz.com/D1/1.hd.live");
+        const playback = {
+            start: new Date("2026-10-15T08:00:00Z"), // 15:00 WIB
+            end: new Date("2026-10-15T09:00:00Z"), // 16:00 WIB
+        };
+        const access = await ezviz.getPlayerAccess(ref, { quality: 1, playback });
+        assert.equal(access.url, "ezopen://open.ezviz.com/D1/1.rec?begin=20261015150000&end=20261015160000");
+        assert.match(access.accessToken, /^at\.fake-/);
+    });
+
     it("captureSnapshot mengunduh gambar dari picUrl", async () => {
         const img = await ezviz.captureSnapshot(ref, { quality: 1 });
         assert.equal(img.contentType, "image/jpeg");

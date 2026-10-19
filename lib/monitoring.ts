@@ -139,6 +139,27 @@ export type CameraDetail = {
     nowMinutes: number;
 };
 
+type RecordingsResult = { recordings: RecordingSegment[]; recordingsError: GatewayErrorKind | null };
+
+/** Segmen rekaman MicroSD satu hari (menit sejak 00:00 WIB), dipotong sampai `until`. */
+async function loadRecordings(camera: CameraView, store: StoreView, dayStart: Date, until: Date): Promise<RecordingsResult> {
+    if (camera.status === "UNKNOWN") return { recordings: [], recordingsError: "account_unavailable" };
+    try {
+        const ranges = await getGateway().listRecordings(
+            {
+                accountId: store.ezvizAccount?.id ?? null,
+                deviceSerial: camera.deviceSerial,
+                channelNo: camera.channelNo,
+            },
+            { start: dayStart, end: until },
+        );
+        return { recordings: toMinuteSegments(ranges, dayStart), recordingsError: null };
+    } catch (error) {
+        if (!isGatewayError(error)) throw error;
+        return { recordings: [], recordingsError: error.kind };
+    }
+}
+
 export async function getCameraDetail(id: string): Promise<CameraDetail | null> {
     const { stores, checkedAt } = await loadStores();
     for (const store of stores) {
@@ -146,28 +167,7 @@ export async function getCameraDetail(id: string): Promise<CameraDetail | null> 
         if (!camera) continue;
 
         const now = new Date();
-        const dayStart = startOfDayWib(now);
-
-        let recordings: RecordingSegment[] = [];
-        let recordingsError: GatewayErrorKind | null = null;
-        if (camera.status === "UNKNOWN") {
-            recordingsError = "account_unavailable";
-        } else {
-            try {
-                const ranges = await getGateway().listRecordings(
-                    {
-                        accountId: store.ezvizAccount?.id ?? null,
-                        deviceSerial: camera.deviceSerial,
-                        channelNo: camera.channelNo,
-                    },
-                    { start: dayStart, end: now },
-                );
-                recordings = toMinuteSegments(ranges, dayStart);
-            } catch (error) {
-                if (!isGatewayError(error)) throw error;
-                recordingsError = error.kind;
-            }
-        }
+        const { recordings, recordingsError } = await loadRecordings(camera, store, startOfDayWib(now), now);
 
         return {
             camera,
@@ -178,6 +178,19 @@ export async function getCameraDetail(id: string): Promise<CameraDetail | null> 
             recordingsError,
             nowMinutes: wibMinutes(now),
         };
+    }
+    return null;
+}
+
+/** Rekaman MicroSD kamera pada hari yang dimulai `dayStart` (00:00 WIB); null bila kamera tidak ada. */
+export async function getCameraRecordings(id: string, dayStart: Date): Promise<RecordingsResult | null> {
+    const { stores } = await loadStores();
+    for (const store of stores) {
+        const camera = store.cameras.find((c) => c.id === id);
+        if (!camera) continue;
+        const now = new Date();
+        const dayEnd = new Date(dayStart.getTime() + 24 * 3_600_000);
+        return loadRecordings(camera, store, dayStart, dayEnd < now ? dayEnd : now);
     }
     return null;
 }

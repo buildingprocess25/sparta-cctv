@@ -29,3 +29,20 @@ export function startOfDayWib(date: Date): Date {
     const t = new Date(date.getTime() + OFFSET_MS);
     return new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()) - OFFSET_MS);
 }
+
+/** "yyyyMMddHHmmss" (WIB) untuk parameter begin/end URL ezopen `.rec`. */
+export function formatEzopenTime(date: Date): string {
+    return formatEzvizTime(date).replace(/\D/g, "");
+}
+
+/** "yyyy-MM-dd" (WIB) dari sebuah waktu; dipakai sebagai kunci tanggal di URL/API. */
+export function wibDateKey(date: Date): string {
+    return formatEzvizTime(date).slice(0, 10);
+}
+
+/** 00:00 WIB untuk kunci "yyyy-MM-dd"; null bila formatnya salah. */
+export function parseWibDateKey(key: string): Date | null {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return null;
+    const date = parseEzvizTime(`${key} 00:00:00`);
+    return Number.isNaN(date.getTime()) || wibDateKey(date) !== key ? null : date;
+}
