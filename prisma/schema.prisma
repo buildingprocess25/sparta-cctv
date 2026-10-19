@@ -1,0 +1,177 @@
+// Konfigurasi URL database ada di prisma.config.ts
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =========================================
+// ENUMS
+// =========================================
+
+enum CameraStatus {
+  ONLINE
+  OFFLINE
+  UNSTABLE
+  UNKNOWN // belum dicek, atau akun EZVIZ kontraktor bermasalah (bukan berarti offline)
+}
+
+enum SdCardStatus {
+  OK
+  NOT_FORMATTED
+  UNREADABLE
+  NONE
+}
+
+enum EzvizAccountStatus {
+  ACTIVE // token valid / dapat diperbarui
+  TOKEN_ERROR // kredensial salah/dibekukan atau refresh gagal; butuh tindakan manusia
+  DISABLED // dimatikan manual oleh admin
+}
+
+// =========================================
+// MODELS
+// =========================================
+
+model Contractor {
+  id           String        @id @default(cuid())
+  name         String        @unique
+  phone        String?
+  picName      String? // PIC lapangan
+  stores       Store[]
+  ezvizAccount EzvizAccount? // satu kontraktor = satu akun EZVIZ Open Platform
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model Store {
+  id           String     @id @default(cuid())
+  code         String     @unique // contoh: ALF-BKS-0421
+  name         String
+  address      String
+  progress     Int        @default(0) // 0-100, progres pembangunan
+  targetDate   DateTime?
+  contractorId String
+  contractor   Contractor @relation(fields: [contractorId], references: [id])
+  cameras      Camera[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([contractorId])
+}
+
+model Camera {
+  id               String        @id @default(cuid())
+  storeId          String
+  store            Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  label            String // contoh: CAM-01
+  area             String // contoh: Area depan
+  deviceSerial     String?       @unique // serial perangkat EZVIZ
+  deviceModel      String? // contoh: EZVIZ H8c 4G
+  channelNo        Int           @default(1)
+  status           CameraStatus  @default(UNKNOWN)
+  statusSince      DateTime? // sejak kapan status saat ini
+  disconnectsToday Int           @default(0)
+  sdStatus         SdCardStatus  @default(OK)
+  sdCapacityGb     Int?
+  sdUsedPercent    Int?
+  uptime7d         Float? // persen uptime 7 hari terakhir
+  lastCheckedAt    DateTime?
+  snapshotPath     String? // berkas snapshot terbaru (relatif terhadap SNAPSHOT_DIR)
+  snapshotAt       DateTime?
+  snapshotTriedAt  DateTime? // percobaan snapshot terakhir (sukses/gagal), untuk mengatur jeda
+  sdCheckedAt      DateTime? // pengecekan MicroSD terakhir
+  events           CameraEvent[]
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@unique([storeId, label])
+  @@index([status])
+}
+
+// Riwayat perubahan status koneksi / MicroSD
+model CameraEvent {
+  id        String       @id @default(cuid())
+  cameraId  String
+  camera    Camera       @relation(fields: [cameraId], references: [id], onDelete: Cascade)
+  status    CameraStatus
+  sdStatus  SdCardStatus
+  note      String?
+  createdAt DateTime     @default(now())
+
+  @@index([cameraId, createdAt])
+}
+
+// =========================================
+// INTEGRASI EZVIZ OPEN PLATFORM
+// =========================================
+
+// Kredensial EZVIZ milik tiap kontraktor. appSecret dan accessToken disimpan
+// terenkripsi (AES-256-GCM, lihat lib/crypto.ts) — tidak pernah plaintext.
+model EzvizAccount {
+  id                 String             @id @default(cuid())
+  contractorId       String             @unique
+  contractor         Contractor         @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+  appKey             String
+  appSecretEnc       String
+  accessTokenEnc     String?
+  tokenExpiresAt     DateTime?
+  areaDomain         String? // domain API wilayah, dari respons token/get
+  deviceLimit        Int                @default(10) // kuota paket Free Trial
+  status             EzvizAccountStatus @default(ACTIVE)
+  lastError          String?
+  lastErrorAt        DateTime?
+  lastTokenRefreshAt DateTime?
+  usage              EzvizUsageDaily[]
+  liveSessions       LiveSession[]
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([status])
+}
+
+// Pemakaian harian per akun, untuk memantau batas paket Free.
+model EzvizUsageDaily {
+  id            String       @id @default(cuid())
+  accountId     String
+  account       EzvizAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  date          DateTime     @db.Date
+  apiCalls      Int          @default(0)
+  snapshotCalls Int          @default(0)
+  liveSeconds   Int          @default(0)
+
+  @@unique([accountId, date])
+}
+
+// Sesi live/playback aktif; dasar pembatas 1 sesi per akun (bandwidth 1 Mbps).
+model LiveSession {
+  id        String       @id @default(cuid())
+  accountId String
+  account   EzvizAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  cameraId  String
+  urlId     String? // id alamat dari live/address/get, untuk live/address/disable
+  hlsUrl    String? // URL HLS asli dari EZVIZ (disimpan untuk proxy server-side)
+  startedAt DateTime     @default(now())
+  expiresAt DateTime
+  endedAt   DateTime?
+
+  @@index([accountId, endedAt])
+}
+
+// Jejak perubahan administratif (akun EZVIZ, pemetaan kamera). Tidak pernah memuat secret.
+// `actor` terisi setelah autentikasi tersedia.
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String // contoh: ezviz.account.create
+  entity    String // contoh: EzvizAccount, Camera
+  entityId  String?
+  detail    String?
+  actor     String?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
