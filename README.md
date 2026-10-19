@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SPARTA CCTV Monitoring
 
-## Getting Started
+Sistem monitoring CCTV kontraktor pada pembangunan toko Alfamart baru (bagian dari ekosistem SPARTA).
+Desain: [Figma — tab "v2 — Revisi"](https://www.figma.com/design/1QH1kWIUu0I2UEezMVOuGS/Sparta-CCTV-Monitoring).
 
-First, run the development server:
+**Stack:** Next.js 16 (App Router) · React 19 · TypeScript · Tailwind CSS 4 · shadcn/ui (`radix-vega`) · Prisma 7 · PostgreSQL
+
+## Menjalankan
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env      # isi DATABASE_URL / DIRECT_URL jika memakai database
+npm run dev               # http://localhost:3002
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Secara bawaan `CAMERA_DATA_SOURCE=mock`: dashboard memakai data contoh dari `lib/seed-data.ts`, tanpa database.
+Untuk memakai PostgreSQL:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# set CAMERA_DATA_SOURCE=db di .env
+npx prisma migrate dev --name init
+npm run db:seed
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Pekerjaan terjadwal (VPS)
 
-## Learn More
+Mode `CAMERA_DATA_SOURCE=ezviz` membutuhkan dua pemicu cron. Endpoint menolak request tanpa `CRON_SECRET`.
 
-To learn more about Next.js, take a look at the following resources:
+```
+*/5 * * * *  curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://<host>/api/cron/ezviz-poll-status
+15 3 * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://<host>/api/cron/ezviz-refresh-tokens
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `ezviz-poll-status`: cek status semua kamera, catat perubahan (`CameraEvent`), hitung putus/uptime, ambil MicroSD & snapshot sesuai jeda.
+- `ezviz-refresh-tokens`: perbarui token yang habis dalam 24 jam dan coba ulang akun `TOKEN_ERROR` tiap ≥ 6 jam.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Struktur
 
-## Deploy on Vercel
+- `app/(app)/` — Dashboard (`/`), Live View (`/kamera/[id]`), admin akun EZVIZ (`/pengaturan/ezviz`, butuh `ADMIN_UI_ENABLED=true`); halaman lain masih placeholder
+- `lib/monitoring.ts` — akses data dashboard/detail kamera (mock atau database)
+- `lib/seed-data.ts` — data contoh: 8 kontraktor, 19 toko, 46 kamera
+- `lib/poller/` — poller status kamera, aturan uptime/putus, penyimpanan snapshot
+- `lib/ezviz/`, `lib/cameras/` — klien EZVIZ, token manager, gateway (mock / ezviz)
+- `docs/` — rencana integrasi dan catatan API EZVIZ
+- `prisma/` — skema dan seed
+- Token desain dari Figma ada di `app/globals.css`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Belum dikerjakan
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Login/SSO, live stream dan playback MicroSD sungguhan, uji dengan akun/kamera asli,
+halaman Semua Kamera / Perlu Ditindak / Toko / Kontraktor / Pengaturan, CI/CD. Rencana lengkap: `docs/ezviz-integration-plan.md`.
