@@ -66,6 +66,8 @@ export interface AdminStore extends AccountStore {
     setCameraSerial(cameraId: string, serial: string | null): Promise<void>;
     /** Tambah kamera baru ke toko milik kontraktor. */
     createCamera(input: { storeId: string; label: string; area: string }): Promise<ContractorCamera>;
+    /** Hapus kamera; mengembalikan false jika tidak ditemukan. */
+    deleteCamera(cameraId: string): Promise<boolean>;
 
     audit(entry: AuditEntry): Promise<void>;
 }

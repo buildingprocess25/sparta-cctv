@@ -161,6 +161,10 @@ export class MemoryAdminStore extends MemoryAccountStore implements AdminStore {
         return rest;
     }
 
+    async deleteCamera(cameraId: string): Promise<boolean> {
+        return this.cameras.delete(cameraId);
+    }
+
     async audit(entry: AuditEntry) {
         this.audits.push(entry);
     }

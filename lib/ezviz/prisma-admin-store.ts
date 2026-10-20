@@ -171,6 +171,15 @@ export class PrismaAdminStore extends PrismaAccountStore implements AdminStore {
         };
     }
 
+    async deleteCamera(cameraId: string): Promise<boolean> {
+        try {
+            await (await db()).camera.delete({ where: { id: cameraId } });
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     async audit(entry: AuditEntry): Promise<void> {
         await (await db()).auditLog.create({
             data: { action: entry.action, entity: entry.entity, entityId: entry.entityId ?? null, detail: entry.detail ?? null },

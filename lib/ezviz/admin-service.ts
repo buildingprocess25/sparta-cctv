@@ -283,4 +283,22 @@ export class AdminService {
         });
         return { ok: true, camera };
     }
+
+    /** Hapus kamera; hanya boleh jika kamera milik kontraktor yang sama. */
+    async removeCamera(contractorId: string, cameraId: string): Promise<Result<object>> {
+        const camera = await this.store.getCamera(cameraId);
+        if (!camera) return { ok: false, error: "Kamera tidak ditemukan." };
+        if (camera.contractorId !== contractorId) return { ok: false, error: "Kamera bukan milik kontraktor ini." };
+
+        const deleted = await this.store.deleteCamera(cameraId);
+        if (!deleted) return { ok: false, error: "Kamera gagal dihapus." };
+
+        await this.store.audit({
+            action: "camera.delete",
+            entity: "Camera",
+            entityId: cameraId,
+            detail: `${camera.label} · ${camera.storeName}`,
+        });
+        return { ok: true };
+    }
 }

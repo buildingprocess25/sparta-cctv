@@ -14,6 +14,7 @@ import { getAdminRuntime } from "@/lib/ezviz/admin-runtime";
 import { formatDateTime } from "@/lib/format";
 import {
     addCameraAction,
+    deleteCameraAction,
     saveAccountAction,
     saveSerialsAction,
     setAccountEnabledAction,
@@ -125,6 +126,7 @@ async function ContractorEzviz({ contractorId }: { contractorId: string }) {
                     cameras={cameras}
                     mapped={contractor.mappedDevices}
                     limit={limit}
+                    deleteAction={deleteCameraAction.bind(null, contractorId)}
                 />
                 {account && <SyncPanel action={syncDevicesAction.bind(null, contractorId)} disabled={account.status === "DISABLED"} />}
             </Section>

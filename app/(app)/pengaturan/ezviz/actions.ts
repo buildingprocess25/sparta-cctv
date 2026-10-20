@@ -127,3 +127,16 @@ export async function addCameraAction(contractorId: string, _prev: FormState, fo
         return unexpected(error);
     }
 }
+
+export async function deleteCameraAction(contractorId: string, cameraId: string): Promise<FormState> {
+    const stop = blocked();
+    if (stop) return stop;
+    try {
+        const result = await getAdminRuntime().service.removeCamera(contractorId, cameraId);
+        if (!result.ok) return { ok: false, message: result.error };
+        refresh(contractorId);
+        return { ok: true, message: "Kamera berhasil dihapus." };
+    } catch (error) {
+        return unexpected(error);
+    }
+}

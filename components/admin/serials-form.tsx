@@ -6,17 +6,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ContractorCamera } from "@/lib/ezviz/admin-store";
 import { cn } from "@/lib/utils";
+import { DeleteCameraButton } from "./delete-camera-button";
 
 export function SerialsForm({
     action,
     cameras,
     mapped,
     limit,
+    deleteAction,
 }: {
     action: (prev: FormState, formData: FormData) => Promise<FormState>;
     cameras: ContractorCamera[];
     mapped: number;
     limit: number;
+    deleteAction: (cameraId: string) => Promise<FormState>;
 }) {
     const [state, formAction, pending] = useActionState(action, null);
 
@@ -43,7 +46,7 @@ export function SerialsForm({
                         {group.name} <span className="font-mono text-xs font-medium text-subtle">{group.code}</span>
                     </legend>
                     {group.cameras.map((c) => (
-                        <div key={c.id} className="grid grid-cols-1 items-start gap-1.5 sm:grid-cols-[150px_1fr] sm:gap-3">
+                        <div key={c.id} className="group grid grid-cols-1 items-start gap-1.5 sm:grid-cols-[150px_1fr_auto] sm:gap-3">
                             <label htmlFor={`serial-${c.id}`} className="pt-2 text-[12.5px] font-medium text-muted-foreground">
                                 {c.label} · {c.area}
                             </label>
@@ -60,6 +63,9 @@ export function SerialsForm({
                                     className="font-mono uppercase"
                                 />
                                 {state?.errors?.[c.id] && <p className="text-xs font-medium text-status-offline">{state.errors[c.id]}</p>}
+                            </div>
+                            <div className="flex items-center pt-1.5">
+                                <DeleteCameraButton cameraId={c.id} label={c.label} action={deleteAction} />
                             </div>
                         </div>
                     ))}
