@@ -10,7 +10,7 @@ export function MobileAppBar({ hasAlerts }: { hasAlerts: boolean }) {
                 <Image src="/images/logo-sparta.png" alt="Sparta" width={22} height={28} className="h-7 w-[22px] object-contain" />
                 <div className="flex flex-col leading-tight">
                     <span className="text-[12.5px] font-bold tracking-[0.04em] text-white">SPARTA</span>
-                    <span className="text-[10px] font-medium text-sidebar-muted">Maintenance</span>
+                    <span className="text-[10px] font-medium text-sidebar-muted">CCTV</span>
                 </div>
             </div>
             <button

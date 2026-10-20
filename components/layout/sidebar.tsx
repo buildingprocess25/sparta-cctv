@@ -42,7 +42,7 @@ export function Sidebar({ alertCount }: { alertCount: number }) {
                     <Image src="/images/logo-sparta.png" alt="Sparta" width={26} height={33} className="h-[33px] w-[26px] object-contain" />
                     <div className="flex flex-col leading-tight">
                         <span className="text-sm font-bold tracking-[0.04em] text-white">SPARTA</span>
-                        <span className="text-[11px] font-medium text-sidebar-muted">Maintenance</span>
+                        <span className="text-[11px] font-medium text-sidebar-muted">CCTV</span>
                     </div>
                 </div>
 
