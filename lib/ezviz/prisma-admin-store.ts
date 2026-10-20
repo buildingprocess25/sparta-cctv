@@ -1,5 +1,5 @@
 import "server-only";
-import type { AdminStore, AuditEntry, CameraOwner, ContractorCamera, ContractorOverview } from "./admin-store";
+import type { AdminStore, AuditEntry, CameraOwner, ContractorCamera, ContractorOverview, StoreSummary } from "./admin-store";
 import { PrismaAccountStore } from "./prisma-account-store";
 
 // Prisma dimuat saat dipakai agar mode mock tidak membutuhkan DATABASE_URL.
@@ -80,6 +80,15 @@ export class PrismaAdminStore extends PrismaAccountStore implements AdminStore {
         }));
     }
 
+    async listStoresByContractor(contractorId: string): Promise<StoreSummary[]> {
+        const rows = await (await db()).store.findMany({
+            where: { contractorId },
+            select: { id: true, name: true, code: true },
+            orderBy: { name: "asc" },
+        });
+        return rows;
+    }
+
     async createAccount(input: { id: string; contractorId: string; appKey: string; appSecretEnc: string }): Promise<void> {
         await (await db()).ezvizAccount.create({ data: input });
     }
@@ -144,6 +153,22 @@ export class PrismaAdminStore extends PrismaAccountStore implements AdminStore {
                 snapshotTriedAt: null,
             },
         });
+    }
+
+    async createCamera(input: { storeId: string; label: string; area: string }): Promise<ContractorCamera> {
+        const c = await (await db()).camera.create({
+            data: { storeId: input.storeId, label: input.label, area: input.area },
+            include: { store: { select: { id: true, name: true, code: true } } },
+        });
+        return {
+            id: c.id,
+            label: c.label,
+            area: c.area,
+            storeId: c.store.id,
+            storeName: c.store.name,
+            storeCode: c.store.code,
+            deviceSerial: c.deviceSerial,
+        };
     }
 
     async audit(entry: AuditEntry): Promise<void> {

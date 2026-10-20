@@ -248,4 +248,39 @@ export class AdminService {
         }
         return out;
     }
+
+    /**
+     * Tambah kamera baru ke toko milik kontraktor.
+     * Validasi: label unik per toko, storeId harus milik kontraktor yang sama.
+     */
+    async addCamera(
+        contractorId: string,
+        input: { storeId: string; label: string; area: string },
+    ): Promise<Result<{ camera: ContractorCamera }>> {
+        const label = input.label.trim().toUpperCase();
+        const area = input.area.trim();
+        if (!label) return { ok: false, error: "Label kamera wajib diisi." };
+        if (label.length > 20) return { ok: false, error: "Label terlalu panjang (maks. 20 karakter)." };
+        if (!area) return { ok: false, error: "Area kamera wajib diisi." };
+        if (area.length > 100) return { ok: false, error: "Area terlalu panjang (maks. 100 karakter)." };
+
+        // Pastikan storeId milik kontraktor ini
+        const stores = await this.store.listStoresByContractor(contractorId);
+        const store = stores.find((s) => s.id === input.storeId);
+        if (!store) return { ok: false, error: "Toko tidak ditemukan atau bukan milik kontraktor ini." };
+
+        // Cek label unik dalam toko
+        const existing = await this.store.listContractorCameras(contractorId);
+        const duplicate = existing.find((c) => c.storeId === input.storeId && c.label.toUpperCase() === label);
+        if (duplicate) return { ok: false, error: `Label "${label}" sudah ada di toko ini.` };
+
+        const camera = await this.store.createCamera({ storeId: input.storeId, label, area });
+        await this.store.audit({
+            action: "camera.create",
+            entity: "Camera",
+            entityId: camera.id,
+            detail: `${label} · ${area} · ${store.name}`,
+        });
+        return { ok: true, camera };
+    }
 }

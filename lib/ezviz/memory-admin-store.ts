@@ -5,21 +5,28 @@ import type {
     CameraOwner,
     ContractorCamera,
     ContractorOverview,
+    StoreSummary,
 } from "./admin-store";
 import { MemoryAccountStore } from "./memory-account-store";
 
 type MemCamera = ContractorCamera & { contractorId: string };
+type MemStore = StoreSummary & { contractorId: string };
 
 /** Implementasi dalam memori untuk tes layanan admin. */
 export class MemoryAdminStore extends MemoryAccountStore implements AdminStore {
     readonly contractors = new Map<string, string>(); // id → nama
     readonly cameras = new Map<string, MemCamera>();
+    readonly stores = new Map<string, MemStore>();
     readonly audits: AuditEntry[] = [];
     private readonly accountByContractor = new Map<string, string>();
     private readonly extras = new Map<string, { deviceLimit: number; lastTokenRefreshAt: Date | null }>();
 
     addContractor(id: string, name: string) {
         this.contractors.set(id, name);
+    }
+
+    addStore(store: MemStore) {
+        this.stores.set(store.id, store);
     }
 
     addCamera(camera: Partial<MemCamera> & { id: string; contractorId: string }) {
@@ -77,6 +84,12 @@ export class MemoryAdminStore extends MemoryAccountStore implements AdminStore {
         return [...this.cameras.values()].filter((c) => c.contractorId === contractorId).map((c) => ({ ...c }));
     }
 
+    async listStoresByContractor(contractorId: string): Promise<StoreSummary[]> {
+        return [...this.stores.values()]
+            .filter((s) => s.contractorId === contractorId)
+            .map(({ id, name, code }) => ({ id, name, code }));
+    }
+
     async createAccount(input: { id: string; contractorId: string; appKey: string; appSecretEnc: string }) {
         this.add({
             id: input.id,
@@ -127,6 +140,25 @@ export class MemoryAdminStore extends MemoryAccountStore implements AdminStore {
 
     async setCameraSerial(cameraId: string, serial: string | null) {
         this.cameras.get(cameraId)!.deviceSerial = serial;
+    }
+
+    async createCamera(input: { storeId: string; label: string; area: string }): Promise<ContractorCamera> {
+        const store = this.stores.get(input.storeId);
+        const id = `cam-${this.cameras.size + 1}`;
+        const cam: MemCamera = {
+            id,
+            label: input.label,
+            area: input.area,
+            storeId: input.storeId,
+            storeName: store?.name ?? "Unknown",
+            storeCode: store?.code ?? "",
+            deviceSerial: null,
+            contractorId: store?.contractorId ?? "",
+        };
+        this.cameras.set(id, cam);
+        const { contractorId: _c, ...rest } = cam;
+        void _c;
+        return rest;
     }
 
     async audit(entry: AuditEntry) {

@@ -110,3 +110,20 @@ export async function saveSerialsAction(contractorId: string, _prev: FormState, 
         return unexpected(error);
     }
 }
+
+export async function addCameraAction(contractorId: string, _prev: FormState, formData: FormData): Promise<FormState> {
+    const stop = blocked();
+    if (stop) return stop;
+    try {
+        const result = await getAdminRuntime().service.addCamera(contractorId, {
+            storeId: String(formData.get("storeId") ?? ""),
+            label: String(formData.get("label") ?? ""),
+            area: String(formData.get("area") ?? ""),
+        });
+        if (!result.ok) return { ok: false, message: result.error };
+        refresh(contractorId);
+        return { ok: true, message: `Kamera ${result.camera.label} berhasil ditambahkan.` };
+    } catch (error) {
+        return unexpected(error);
+    }
+}

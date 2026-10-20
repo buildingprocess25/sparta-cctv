@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AccountForm } from "@/components/admin/account-form";
 import { AccountStatusBadge, tokenLifeText } from "@/components/admin/account-status";
+import { AddCameraForm } from "@/components/admin/add-camera-form";
 import { AdminGate } from "@/components/admin/admin-gate";
 import { SerialsForm } from "@/components/admin/serials-form";
 import { SyncPanel } from "@/components/admin/sync-panel";
@@ -12,6 +13,7 @@ import { Page } from "@/components/layout/page";
 import { getAdminRuntime } from "@/lib/ezviz/admin-runtime";
 import { formatDateTime } from "@/lib/format";
 import {
+    addCameraAction,
     saveAccountAction,
     saveSerialsAction,
     setAccountEnabledAction,
@@ -47,7 +49,10 @@ async function ContractorEzviz({ contractorId }: { contractorId: string }) {
     const contractor = await store.getContractor(contractorId);
     if (!contractor) notFound();
 
-    const cameras = await store.listContractorCameras(contractorId);
+    const [cameras, stores] = await Promise.all([
+        store.listContractorCameras(contractorId),
+        store.listStoresByContractor(contractorId),
+    ]);
     const account = contractor.account;
     const now = new Date();
     const limit = account?.deviceLimit ?? 10;
@@ -122,6 +127,16 @@ async function ContractorEzviz({ contractorId }: { contractorId: string }) {
                     limit={limit}
                 />
                 {account && <SyncPanel action={syncDevicesAction.bind(null, contractorId)} disabled={account.status === "DISABLED"} />}
+            </Section>
+
+            <Section
+                title="Tambah kamera"
+                description="Daftarkan slot kamera baru ke salah satu toko kontraktor ini. Setelah dibuat, isi serial perangkat di atas."
+            >
+                <AddCameraForm
+                    action={addCameraAction.bind(null, contractorId)}
+                    stores={stores}
+                />
             </Section>
         </Page>
     );

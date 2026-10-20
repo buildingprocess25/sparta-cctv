@@ -31,6 +31,12 @@ export type ContractorCamera = {
     deviceSerial: string | null;
 };
 
+export type StoreSummary = {
+    id: string;
+    name: string;
+    code: string;
+};
+
 export type CameraOwner = { id: string; contractorId: string; label: string; storeName: string; deviceSerial: string | null };
 
 export type AuditEntry = {
@@ -46,6 +52,7 @@ export interface AdminStore extends AccountStore {
     listContractors(): Promise<ContractorOverview[]>;
     getContractor(contractorId: string): Promise<ContractorOverview | null>;
     listContractorCameras(contractorId: string): Promise<ContractorCamera[]>;
+    listStoresByContractor(contractorId: string): Promise<StoreSummary[]>;
 
     createAccount(input: { id: string; contractorId: string; appKey: string; appSecretEnc: string }): Promise<void>;
     /** Ganti kredensial: token lama dibuang; status ACTIVE kecuali sedang DISABLED; error dihapus. */
@@ -57,6 +64,8 @@ export interface AdminStore extends AccountStore {
     countMappedCameras(contractorId: string): Promise<number>;
     /** Mengubah serial → status pemantauan kamera direset (belum dicek lagi). */
     setCameraSerial(cameraId: string, serial: string | null): Promise<void>;
+    /** Tambah kamera baru ke toko milik kontraktor. */
+    createCamera(input: { storeId: string; label: string; area: string }): Promise<ContractorCamera>;
 
     audit(entry: AuditEntry): Promise<void>;
 }
