@@ -146,7 +146,7 @@ model EzvizUsageDaily {
   @@unique([accountId, date])
 }
 
-// Sesi live/playback aktif; dasar pembatas 1 sesi per akun (bandwidth 1 Mbps).
+// Sesi live/playback aktif; dasar pembatas maks. N sesi per akun (bandwidth 1 Mbps).
 model LiveSession {
   id        String       @id @default(cuid())
   accountId String
@@ -154,6 +154,7 @@ model LiveSession {
   cameraId  String
   urlId     String? // id alamat dari live/address/get, untuk live/address/disable
   hlsUrl    String? // URL HLS asli dari EZVIZ (disimpan untuk proxy server-side)
+  quality   Int          @default(2) // 1 HD, 2 sub-stream (HD hanya bila tak ada live lain)
   startedAt DateTime     @default(now())
   expiresAt DateTime
   endedAt   DateTime?

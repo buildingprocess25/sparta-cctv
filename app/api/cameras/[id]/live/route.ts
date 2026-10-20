@@ -2,7 +2,13 @@ import { getDataSource, getGateway } from "@/lib/cameras";
 import { isGatewayError } from "@/lib/cameras/errors";
 import type { RecordingRange } from "@/lib/cameras/gateway";
 import { wibDateKey } from "@/lib/ezviz/time";
-import { findConflict } from "@/lib/live-limiter";
+import {
+    checkCapacity,
+    denialMessage,
+    maxLiveSessions,
+    type CapacityDenial,
+    type LiveQuality,
+} from "@/lib/live-limiter";
 import { addLiveSeconds, liveSecondsOf } from "@/lib/live-usage";
 import { getCameraDetail } from "@/lib/monitoring";
 
@@ -47,8 +53,48 @@ async function closeSessions(prisma: Prisma, accountId: string, cameraId: string
     await addLiveSeconds(accountId, seconds, now).catch((e) => console.error("[live] catat usage gagal:", e));
 }
 
+// Pesan slot sesi untuk kamera ini secara atomik: kunci per akun (advisory lock) agar beberapa POST
+// bersamaan dari grid multi-live tidak lolos pengecekan yang sama. Sesi lama kamera ini ditutup.
+// Sesi dibuat berstatus pending; pemanggil memperbarui (HLS) atau membiarkan PATCH memperpanjangnya.
+async function reserveSession(
+    prisma: Prisma,
+    input: { accountId: string; cameraId: string; quality: LiveQuality; expiresAt: Date },
+): Promise<{ sessionId: string } | { denial: CapacityDenial; max: number }> {
+    const max = maxLiveSessions();
+    const now = new Date();
+    const result = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.accountId}))`;
+        const open = await tx.liveSession.findMany({ where: { accountId: input.accountId, endedAt: null } });
+        const denial = checkCapacity(open, input.cameraId, now, { max, quality: input.quality });
+        if (denial) return { ok: false as const, denial };
+        const replaced = open.filter((s) => s.cameraId === input.cameraId);
+        if (replaced.length > 0) {
+            await tx.liveSession.updateMany({
+                where: { id: { in: replaced.map((s) => s.id) } },
+                data: { endedAt: now },
+            });
+        }
+        const session = await tx.liveSession.create({
+            data: {
+                accountId: input.accountId,
+                cameraId: input.cameraId,
+                quality: input.quality,
+                expiresAt: input.expiresAt,
+            },
+        });
+        const replacedSeconds = replaced.reduce((sum, s) => sum + liveSecondsOf(s, now), 0);
+        return { ok: true as const, sessionId: session.id, replacedSeconds };
+    });
+    if (!result.ok) return { denial: result.denial, max };
+    await addLiveSeconds(input.accountId, result.replacedSeconds, now).catch((e) =>
+        console.error("[live] catat usage gagal:", e),
+    );
+    return { sessionId: result.sessionId };
+}
+
 // POST /api/cameras/[id]/live — mulai sesi live (atau playback MicroSD dengan ?begin=&end=).
-// Live dan playback berbagi pembatas 1 sesi per akun, heartbeat PATCH, dan DELETE.
+// Live dan playback berbagi pembatas maks. N sesi per akun (LIVE_MAX_SESSIONS_PER_ACCOUNT),
+// heartbeat PATCH, dan DELETE. Ditolak pembatas → 409 { error, code: "full" | "hd_busy" }.
 // Balasan: { kind: "ezopen", url, accessToken, domain, expiresAt, sessionId } atau
 // { kind: "hls", url, expiresAt, sessionId }. sessionId dipakai klien untuk DELETE ?session=.
 // KEAMANAN (mode ezopen): accessToken akun kontraktor dikirim ke browser karena EZUIKit memerlukannya.
@@ -58,7 +104,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const { id } = await params;
     const search = new URL(req.url).searchParams;
     // ?quality=1 (HD) atau 2 (sub-stream, bawaan); berguna untuk menguji kamera yang gagal di sub-stream.
-    const quality = search.get("quality") === "1" ? 1 : 2;
+    const quality: LiveQuality = search.get("quality") === "1" ? 1 : 2;
     const playback = parsePlayback(search);
     if (playback === "invalid") {
         return Response.json({ error: "Rentang waktu rekaman tidak valid" }, { status: 400 });
@@ -81,50 +127,51 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (camera.status === "UNKNOWN") {
         return Response.json({ error: "Status kamera belum diketahui" }, { status: 409 });
     }
-
-    const ref = {
-        accountId: store.ezvizAccount?.id ?? null,
-        deviceSerial: camera.deviceSerial,
-        channelNo: camera.channelNo,
-    };
-
-    // Pembatas: 1 sesi live aktif per akun (kamera lain yang sedang dibuka → 409).
-    const accountId = store.ezvizAccount?.id;
-    if (accountId) {
-        try {
-            const { default: prisma } = await import("@/lib/prisma");
-            const open = await prisma.liveSession.findMany({ where: { accountId, endedAt: null } });
-            if (findConflict(open, id, new Date())) {
-                return Response.json(
-                    { error: "Kamera lain pada akun kontraktor ini sedang dibuka. Tutup dulu live tersebut." },
-                    { status: 409 },
-                );
-            }
-        } catch (dbErr) {
-            console.error("[live] Gagal memeriksa pembatas live:", dbErr);
-        }
+    // Heartbeat PATCH memperbarui alamat HLS sebagai live, jadi playback HLS belum didukung.
+    if (liveProtocol() === "hls" && playback) {
+        return Response.json({ error: "Playback hanya tersedia dengan player ezopen" }, { status: 501 });
     }
+
+    const accountId = store.ezvizAccount.id;
+    const ref = { accountId, deviceSerial: camera.deviceSerial, channelNo: camera.channelNo };
+    const { default: prisma } = await import("@/lib/prisma");
+
+    // Pembatas: maks. N sesi aktif per akun; HD hanya bila tidak ada kamera lain yang live.
+    let sessionId: string | null = null;
+    try {
+        const reserved = await reserveSession(prisma, {
+            accountId,
+            cameraId: id,
+            quality,
+            // HLS: umur sesi diganti dengan umur alamat yang diminta sesudah ini.
+            expiresAt: new Date(Date.now() + PENDING_EXPIRE_SECONDS * 1000),
+        });
+        if ("denial" in reserved) {
+            return Response.json(
+                { error: denialMessage(reserved.denial, reserved.max), code: reserved.denial },
+                { status: 409 },
+            );
+        }
+        sessionId = reserved.sessionId;
+    } catch (dbErr) {
+        console.error("[live] Gagal memeriksa pembatas / menyimpan LiveSession:", dbErr);
+    }
+
+    // Permintaan ke EZVIZ gagal → slot dilepas lagi (tanpa mencatat usage).
+    const releaseSlot = async () => {
+        if (sessionId) await prisma.liveSession.delete({ where: { id: sessionId } }).catch(() => {});
+    };
 
     if (liveProtocol() === "ezopen") {
         try {
             const access = await getGateway().getPlayerAccess(ref, { quality, playback: playback ?? undefined });
             const expiresAt = new Date(Date.now() + PENDING_EXPIRE_SECONDS * 1000);
-            let sessionId: string | null = null;
-            try {
-                const { default: prisma } = await import("@/lib/prisma");
-                await closeSessions(prisma, store.ezvizAccount.id, id);
-                const session = await prisma.liveSession.create({
-                    data: { accountId: store.ezvizAccount.id, cameraId: id, expiresAt },
-                });
-                sessionId = session.id;
-            } catch (dbErr) {
-                console.error("[live] Gagal menyimpan LiveSession:", dbErr);
-            }
             return Response.json(
                 { kind: "ezopen", ...access, expiresAt: expiresAt.toISOString(), sessionId },
                 { headers: { "Cache-Control": "no-store" } },
             );
         } catch (error) {
+            await releaseSlot();
             if (isGatewayError(error)) {
                 const status = error.kind === "rate_limited" ? 429 : error.kind === "unsupported" ? 501 : 502;
                 return Response.json({ error: error.message }, { status });
@@ -134,36 +181,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         }
     }
 
-    // Heartbeat PATCH memperbarui alamat HLS sebagai live, jadi playback HLS belum didukung.
-    if (playback) {
-        return Response.json({ error: "Playback hanya tersedia dengan player ezopen" }, { status: 501 });
-    }
-
     try {
-        const stream = await getGateway().startLive(ref, {
-            expireSeconds: LIVE_EXPIRE_SECONDS,
-            quality,
-        });
+        const stream = await getGateway().startLive(ref, { expireSeconds: LIVE_EXPIRE_SECONDS, quality });
 
-        // Simpan LiveSession + hlsUrl ke database (bukan in-memory, agar bisa diakses dari route /hls)
-        let sessionId: string | null = null;
-        try {
-            const { default: prisma } = await import("@/lib/prisma");
-            if (store.ezvizAccount?.id) {
-                await closeSessions(prisma, store.ezvizAccount.id, id);
-                const session = await prisma.liveSession.create({
-                    data: {
-                        accountId: store.ezvizAccount.id,
-                        cameraId: id,
-                        urlId: stream.id,
-                        hlsUrl: stream.url, // simpan URL HLS untuk proxy server-side
-                        expiresAt: stream.expiresAt,
-                    },
-                });
-                sessionId = session.id;
-            }
-        } catch (dbErr) {
-            console.error("[live] Gagal menyimpan LiveSession:", dbErr);
+        // Simpan alamat HLS ke sesi (bukan in-memory, agar bisa diakses dari route /hls)
+        if (sessionId) {
+            await prisma.liveSession
+                .update({
+                    where: { id: sessionId },
+                    data: { urlId: stream.id, hlsUrl: stream.url, expiresAt: stream.expiresAt },
+                })
+                .catch((dbErr) => console.error("[live] Gagal menyimpan alamat HLS:", dbErr));
         }
 
         // Kembalikan URL proxy ke browser (URL EZVIZ tidak dikirim ke klien)
@@ -177,6 +205,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             sessionId,
         });
     } catch (error) {
+        await releaseSlot();
         if (isGatewayError(error)) {
             const status = error.kind === "offline" ? 409 : error.kind === "rate_limited" ? 429 : 502;
             return Response.json({ error: error.message }, { status });
@@ -263,7 +292,10 @@ export async function PATCH(_req: Request, { params }: { params: Promise<{ id: s
         channelNo: detail.camera.channelNo,
     };
     try {
-        const stream = await getGateway().startLive(ref, { expireSeconds: LIVE_EXPIRE_SECONDS, quality: 2 });
+        const stream = await getGateway().startLive(ref, {
+            expireSeconds: LIVE_EXPIRE_SECONDS,
+            quality: current.quality === 1 ? 1 : 2,
+        });
         await prisma.liveSession.update({
             where: { id: current.id },
             data: { urlId: stream.id, hlsUrl: stream.url, expiresAt: stream.expiresAt },
