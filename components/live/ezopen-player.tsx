@@ -31,12 +31,15 @@ export function EzopenPlayer({
     onError,
     onTalkChange,
     controlsRef,
+    talk = true,
 }: {
     access: EzopenAccess;
     onPlaying: () => void;
     onError: (message: string) => void;
     onTalkChange?: (change: TalkChange) => void;
     controlsRef?: Ref<EzopenControls>;
+    /** muat plugin mikrofon (bicara 2 arah); dimatikan di grid multi-live agar lebih ringan */
+    talk?: boolean;
 }) {
     const domId = `ezopen-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
     const containerRef = useRef<HTMLDivElement>(null);
@@ -86,7 +89,7 @@ export function EzopenPlayer({
                 env: { domain: access.domain },
                 template: "simple",
                 audio: false,
-                plugin: ["talk"],
+                plugin: talk ? ["talk"] : [],
                 width: el.clientWidth,
                 height: el.clientHeight,
                 handleSuccess: () => callbacks.current.onPlaying(),
@@ -136,7 +139,7 @@ export function EzopenPlayer({
                 // abaikan
             }
         };
-    }, [access.url, access.accessToken, access.domain, domId]);
+    }, [access.url, access.accessToken, access.domain, domId, talk]);
 
     // Wadah luar yang diukur; EZUIKit menulis width/height inline ke div ber-id di dalamnya.
     return (
