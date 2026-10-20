@@ -1,6 +1,5 @@
 "use client";
 
-import Hls from "hls.js";
 import {
     Camera,
     Circle,
@@ -17,16 +16,16 @@ import {
     ZoomIn,
     type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { EzopenPlayer, type EzopenAccess, type EzopenControls, type TalkChange } from "./ezopen-player";
+import { EzopenPlayer, type TalkChange } from "./ezopen-player";
 import { usePlayback, type PlaybackRange } from "./playback-context";
 import { PtzPad } from "./ptz-pad";
 import { takeSnapshot } from "./snapshot-button";
+import { useLiveSession } from "./use-live-session";
 
 const AUTO_STOP_SECONDS = 180;
-const HEARTBEAT_MIN_MS = 60_000;
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const mmss = (total: number) => `${pad(Math.floor(total / 60))}:${pad(total % 60)}`;
@@ -114,7 +113,6 @@ function PlaybackPlaceholder() {
     );
 }
 
-type StreamState = "idle" | "loading" | "playing" | "error";
 type TalkState = "off" | "connecting" | "on";
 
 function ControlButton({
@@ -172,19 +170,21 @@ function LivePlayer({
     const offline = blockedMessage !== null;
     const isLive = !playback;
     const containerRef = useRef<HTMLDivElement>(null);
-    const videoRef = useRef<HTMLVideoElement>(null);
-    const hlsRef = useRef<Hls | null>(null);
+    const session = useLiveSession({
+        cameraId,
+        playback,
+        // Auto-mulai saat komponen mount (kalau kamera online)
+        autoStart: !offline,
+        onStartError: (msg) => toast.error(`${playback ? "Playback" : "Live stream"} gagal: ${msg}`),
+    });
+    const { state: streamState, error: streamError, ezopen, playing, videoRef } = session;
 
-    const [streamState, setStreamState] = useState<StreamState>(offline ? "idle" : "loading");
-    const [streamError, setStreamError] = useState<string | null>(null);
     const [remaining, setRemaining] = useState(AUTO_STOP_SECONDS);
     const [watched, setWatched] = useState(0);
     const [clock, setClock] = useState<string | null>(null);
-    const [ezopen, setEzopen] = useState<EzopenAccess | null>(null);
-    const playing = streamState === "playing";
 
     // Kontrol live: suara/mic/zoom/rekam lewat player ezopen; PTZ lewat server (juga untuk HLS).
-    const controls = useRef<EzopenControls>(null);
+    const controls = session.controlsRef;
     const [hd, setHd] = useState(false);
     const [sound, setSound] = useState(false);
     const [talk, setTalk] = useState<TalkState>("off");
@@ -233,154 +233,29 @@ function LivePlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [playing]);
 
-    // Sesi server yang sedang dibuka komponen ini; ditutup saat stop, error, atau unmount agar
-    // tidak memblokir kamera lain pada akun yang sama (pembatas 1 sesi per akun).
-    const sessionRef = useRef<string | null>(null);
-    function endSession() {
-        const session = sessionRef.current;
-        if (!session) return;
-        sessionRef.current = null;
-        // keepalive: tetap terkirim walau halaman sedang ditinggalkan
-        fetch(`/api/cameras/${encodeURIComponent(cameraId)}/live?session=${encodeURIComponent(session)}`, {
-            method: "DELETE",
-            keepalive: true,
-        }).catch(() => {});
-    }
-
-    // Cleanup HLS & sesi saat unmount (pindah halaman, ganti tab live/playback, ganti rentang)
-    useEffect(() => {
-        return () => {
-            destroyHls();
-            endSession();
-        };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    function destroyHls() {
-        if (hlsRef.current) {
-            hlsRef.current.destroy();
-            hlsRef.current = null;
-        }
-    }
-
     async function startStream(highQuality = hd) {
         if (offline) return;
-        endSession();
-        setStreamState("loading");
-        setStreamError(null);
         setWatched(0);
         setRemaining(AUTO_STOP_SECONDS);
         resetControls();
-
-        const query = playback
-            ? `?begin=${encodeURIComponent(playback.start.toISOString())}&end=${encodeURIComponent(playback.end.toISOString())}`
-            : highQuality
-              ? "?quality=1"
-              : "";
-        try {
-            const res = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/live${query}`, { method: "POST" });
-            if (!res.ok) {
-                const body = await res.json().catch(() => ({}));
-                throw new Error(body.error ?? `HTTP ${res.status}`);
-            }
-            const body = (await res.json()) as (
-                | ({ kind: "ezopen"; expiresAt: string } & EzopenAccess)
-                | { kind: "hls"; url: string; expiresAt: string }
-            ) & { sessionId: string | null };
-            sessionRef.current = body.sessionId;
-            if (body.kind === "ezopen") {
-                // Status "playing" diset oleh EzopenPlayer saat frame pertama tampil.
-                setEzopen({ url: body.url, accessToken: body.accessToken, domain: body.domain });
-            } else {
-                attachHls(body.url);
-            }
-        } catch (error) {
-            setEzopen(null);
-            const msg = error instanceof Error ? error.message : "Gagal memulai stream";
-            setStreamError(msg);
-            setStreamState("error");
-            toast.error(`${playback ? "Playback" : "Live stream"} gagal: ${msg}`);
-        }
-    }
-
-    function attachHls(url: string) {
-        const video = videoRef.current;
-        if (!video) return;
-
-        destroyHls();
-
-        if (Hls.isSupported()) {
-            const hls = new Hls({
-                enableWorker: true,
-                lowLatencyMode: true,
-                backBufferLength: 30,
-            });
-            hlsRef.current = hls;
-            hls.loadSource(url);
-            hls.attachMedia(video);
-            hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                video.play().catch(() => {});
-                setStreamState("playing");
-            });
-            hls.on(Hls.Events.ERROR, (_evt, data) => {
-                if (data.fatal) {
-                    console.error("[hls] fatal error:", {
-                        type: data.type,
-                        details: data.details,
-                        url: (data as unknown as Record<string, unknown>).url,
-                        response: (data as unknown as Record<string, unknown>).response,
-                    });
-                    setStreamError(`Stream gagal: ${data.details ?? data.type ?? "unknown"}`);
-                    setStreamState("error");
-                    destroyHls();
-                    endSession();
-                }
-            });
-        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-            // Safari — native HLS
-            video.src = url;
-            video.addEventListener("loadedmetadata", () => {
-                video.play().catch(() => {});
-                setStreamState("playing");
-            }, { once: true });
-        } else {
-            setStreamError("Browser tidak mendukung HLS");
-            setStreamState("error");
-        }
+        await session.start(highQuality);
     }
 
     function stopStream() {
-        destroyHls();
         // Simpan klip yang sedang direkam dan matikan mic sebelum player dibongkar.
         if (liveFlags.current.recording) void controls.current?.stopRecording().catch(() => {});
         if (liveFlags.current.talk !== "off") controls.current?.stopTalk();
         resetControls();
         setPtzOpen(false);
-        setEzopen(null);
-        const video = videoRef.current;
-        if (video) {
-            video.pause();
-            video.removeAttribute("src");
-            video.load();
-        }
-        // Beritahu server agar sesi ditutup (fire-and-forget)
-        endSession();
-        setStreamState("idle");
-        setStreamError(null);
+        session.stop();
     }
 
-    const lastBeat = useRef(0);
-    const heartbeat = useCallback(() => {
-        lastBeat.current = Date.now();
-        fetch(`/api/cameras/${encodeURIComponent(cameraId)}/live`, { method: "PATCH" }).catch(() => {});
-    }, [cameraId]);
-    const touch = useCallback(() => {
+    const { beat } = session;
+    function touch() {
         if (!playing) return;
         setRemaining(AUTO_STOP_SECONDS);
-        // Heartbeat ke server (maks. 1x per 60 dtk) agar alamat stream diperpanjang.
-        if (Date.now() - lastBeat.current < HEARTBEAT_MIN_MS) return;
-        heartbeat();
-    }, [playing, heartbeat]);
+        beat();
+    }
 
     async function toggleSound() {
         const next = !sound;
@@ -452,15 +327,6 @@ function LivePlayer({
         void startStream(next);
     }
 
-    // Auto-mulai saat komponen mount (kalau kamera online)
-    useEffect(() => {
-        if (!offline) {
-            const t = setTimeout(startStream, 0);
-            return () => clearTimeout(t);
-        }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
     return (
         <div
             ref={containerRef}
@@ -485,17 +351,8 @@ function LivePlayer({
                     access={ezopen}
                     controlsRef={controls}
                     onTalkChange={onTalkChange}
-                    onPlaying={() => {
-                        setStreamState("playing");
-                        // Server membuat sesi ezopen "pending" (60 dtk); frame pertama → perpanjang ke 3 menit.
-                        heartbeat();
-                    }}
-                    onError={(msg) => {
-                        setEzopen(null);
-                        setStreamError(msg);
-                        setStreamState("error");
-                        endSession();
-                    }}
+                    onPlaying={session.onEzopenPlaying}
+                    onError={session.onEzopenError}
                 />
             )}
 
