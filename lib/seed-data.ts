@@ -136,6 +136,10 @@ export function mockSerial(storeIndex: number, cameraIndex: number) {
 }
 
 /** ID akun EZVIZ contoh: satu per kontraktor. */
+export function mockContractorId(contractorIndex: number) {
+    return `kontraktor-${contractorIndex}`;
+}
+
 export function mockAccountId(contractorIndex: number) {
     return `mock-${contractorIndex}`;
 }

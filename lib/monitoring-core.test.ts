@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
     applyAccountOverride,
+    buildContractorLive,
     buildDashboard,
     deriveConnectivity,
+    pickLiveCameras,
     toMinuteSegments,
     type CameraStatus,
     type CameraView,
@@ -44,6 +46,7 @@ function store(
         code: `CODE-${name}`,
         name,
         address: "Alamat",
+        contractorId: `id-${contractor}`,
         contractorName: contractor,
         contractorPhone: "0812",
         contractorPic: null,
@@ -215,5 +218,34 @@ describe("deriveConnectivity", () => {
 
     it("online tanpa putus → semua up", () => {
         assert.ok(deriveConnectivity(cam("1"), now).every((s) => s === "up"));
+    });
+});
+
+describe("buildContractorLive", () => {
+    const stores = [
+        store("Toko B", "K1", [cam("CAM-02"), cam("CAM-01")]),
+        store("Toko A", "K1", [cam("CAM-01", "OFFLINE")]),
+        store("Toko C", "K2", [cam("CAM-01")]),
+    ];
+    it("menggabungkan kamera semua toko satu kontraktor, urut toko lalu label", () => {
+        const view = buildContractorLive(stores, "id-K1");
+        assert.equal(view?.contractor.name, "K1");
+        assert.equal(view?.account?.id, "acc-K1");
+        assert.deepEqual(
+            view?.cameras.map((c) => `${c.storeName}:${c.label}`),
+            ["Toko A:CAM-01", "Toko B:CAM-01", "Toko B:CAM-02"],
+        );
+    });
+    it("null bila kontraktor tidak punya toko", () => {
+        assert.equal(buildContractorLive(stores, "id-K9"), null);
+    });
+});
+
+describe("pickLiveCameras", () => {
+    const cameras = [cam("1", "OFFLINE"), cam("2"), cam("3", "UNSTABLE"), cam("4", "UNKNOWN"), cam("5")];
+    it("hanya kamera online/tidak stabil, maksimal sebanyak batas", () => {
+        assert.deepEqual(pickLiveCameras(cameras, 2), ["s:2", "s:3"]);
+        assert.deepEqual(pickLiveCameras(cameras, 5), ["s:2", "s:3", "s:5"]);
+        assert.deepEqual(pickLiveCameras(cameras, 0), []);
     });
 });

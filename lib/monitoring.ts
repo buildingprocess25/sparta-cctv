@@ -4,18 +4,21 @@ import { isGatewayError, type GatewayErrorKind } from "@/lib/cameras/errors";
 import { startOfDayWib } from "@/lib/ezviz/time";
 import {
     applyAccountOverride,
+    buildContractorLive,
     buildDashboard,
     deriveConnectivity,
     toMinuteSegments,
     wibMinutes,
     type CameraView,
     type ConnectivitySlot,
+    type ContractorLiveView,
     type DashboardData,
     type DashboardFilters,
     type RecordingSegment,
     type StoreView,
 } from "@/lib/monitoring-core";
-import { mockAccountId, mockSerial, seedContractors, seedStores } from "@/lib/seed-data";
+import { maxLiveSessions } from "@/lib/live-limiter";
+import { mockAccountId, mockContractorId, mockSerial, seedContractors, seedStores } from "@/lib/seed-data";
 
 export type * from "@/lib/monitoring-core";
 
@@ -36,6 +39,7 @@ function loadMockStores(now: number): StoreView[] {
         code: s.code,
         name: s.name,
         address: s.address,
+        contractorId: mockContractorId(s.contractor),
         contractorName: seedContractors[s.contractor].name,
         contractorPhone: seedContractors[s.contractor].phone,
         contractorPic: seedContractors[s.contractor].pic,
@@ -78,6 +82,7 @@ async function loadDbStores(checkedAt: Date): Promise<StoreView[]> {
         code: s.code,
         name: s.name,
         address: s.address,
+        contractorId: s.contractorId,
         contractorName: s.contractor.name,
         contractorPhone: s.contractor.phone,
         contractorPic: s.contractor.picName,
@@ -120,6 +125,19 @@ async function loadStores(): Promise<{ stores: StoreView[]; checkedAt: Date }> {
 export async function getDashboardData(filters: DashboardFilters = {}): Promise<DashboardData> {
     const { stores, checkedAt } = await loadStores();
     return buildDashboard(stores, checkedAt, filters);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-live per kontraktor
+// ---------------------------------------------------------------------------
+
+/** Semua kamera satu kontraktor + batas live bersamaan akunnya; null bila kontraktor tidak ada. */
+export async function getContractorLive(
+    contractorId: string,
+): Promise<(ContractorLiveView & { maxLive: number }) | null> {
+    const { stores } = await loadStores();
+    const view = buildContractorLive(stores, contractorId);
+    return view && { ...view, maxLive: maxLiveSessions() };
 }
 
 // ---------------------------------------------------------------------------

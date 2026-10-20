@@ -28,6 +28,7 @@ export type StoreView = {
     code: string;
     name: string;
     address: string;
+    contractorId: string;
     contractorName: string;
     contractorPhone: string | null;
     contractorPic: string | null;
@@ -215,6 +216,45 @@ export function buildDashboard(
         alerts,
         contractors,
     };
+}
+
+// ---------------------------------------------------------------------------
+// Multi-live per kontraktor
+// ---------------------------------------------------------------------------
+
+export type LiveGridCamera = CameraView & { storeName: string; storeCode: string };
+
+export type ContractorLiveView = {
+    contractor: { id: string; name: string };
+    /** akun EZVIZ kontraktor; null = belum punya akun */
+    account: StoreView["ezvizAccount"];
+    /** semua kamera kontraktor, urut nama toko lalu label */
+    cameras: LiveGridCamera[];
+};
+
+/** Kamera satu kontraktor untuk grid multi-live; null bila kontraktor tidak punya toko. */
+export function buildContractorLive(stores: StoreView[], contractorId: string): ContractorLiveView | null {
+    const own = stores
+        .filter((s) => s.contractorId === contractorId)
+        .sort((a, b) => a.name.localeCompare(b.name, "id"));
+    if (own.length === 0) return null;
+    return {
+        contractor: { id: contractorId, name: own[0].contractorName },
+        account: own[0].ezvizAccount,
+        cameras: own.flatMap((s) =>
+            [...s.cameras]
+                .sort((a, b) => a.label.localeCompare(b.label, "id"))
+                .map((c) => ({ ...c, storeName: s.name, storeCode: s.code })),
+        ),
+    };
+}
+
+/** Kamera yang bisa diputar live (online / tidak stabil). */
+export const canGoLive = (c: CameraView) => c.status === "ONLINE" || c.status === "UNSTABLE";
+
+/** Id kamera yang langsung diputar saat grid dibuka: kamera yang bisa live, maksimal `max`, sesuai urutan. */
+export function pickLiveCameras(cameras: CameraView[], max: number): string[] {
+    return cameras.filter(canGoLive).slice(0, Math.max(0, max)).map((c) => c.id);
 }
 
 // ---------------------------------------------------------------------------
