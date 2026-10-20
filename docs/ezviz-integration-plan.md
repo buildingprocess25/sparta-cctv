@@ -1,6 +1,6 @@
 # Rencana Implementasi Integrasi EZVIZ
 
-Status (19 Okt 2026): **Fase 0–5 selesai; Fase 6 sebagian** (live HLS via proxy, pembatas 1 sesi/akun, heartbeat PATCH, pencatatan `liveSeconds`/`snapshotCalls`, snapshot manual 30 dtk; belum: pembersih sesi kedaluwarsa di cron) (dokumentasi API, skema + enkripsi, klien + token manager, gateway + status UNKNOWN,
+Status (19 Okt 2026): **Fase 0–5 selesai; Fase 6 sebagian** (live HLS via proxy, pembatas maks. N sesi/akun (lihat `multi-live-plan.md`), heartbeat PATCH, pencatatan `liveSeconds`/`snapshotCalls`, snapshot manual 30 dtk; belum: pembersih sesi kedaluwarsa di cron) (dokumentasi API, skema + enkripsi, klien + token manager, gateway + status UNKNOWN,
 poller + cron, halaman admin akun). Sisa Fase 6–9 ( playback, uji akun asli, hardening).
 
 Diuji end-to-end dengan database PostgreSQL sungguhan (cluster sementara: 3 migrasi diterapkan tanpa drift, seed, poller via
@@ -12,7 +12,7 @@ endpoint cron, halaman admin) dan server EZVIZ palsu. **Belum** diuji dengan aku
 |---|---|
 | Tiap kontraktor membuat akun EZVIZ Open Platform sendiri; HO meminta appKey/appSecret dari mereka | Kredensial banyak dan milik pihak ketiga → disimpan di database, terenkripsi, bukan di `.env` |
 | Satu akun = satu kontraktor (kasus >10 device dianggap edge case) | Relasi 1 kontraktor : 1 akun. Tabel akun tetap terpisah agar mudah dilonggarkan |
-| Akun memakai paket **Free Trial**: 10 device, bandwidth 1 Mbps | Cap 10 device ditegakkan di sistem; live stream dibatasi 1 sesi aktif per akun |
+| Akun memakai paket **Free Trial**: 10 device, bandwidth 1 Mbps | Cap 10 device ditegakkan di sistem; live stream dibatasi maks. `LIVE_MAX_SESSIONS_PER_ACCOUNT` sesi aktif per akun (bawaan 2, sub-stream); HD hanya bila tidak ada live lain |
 | `accessToken` kedaluwarsa berkala (disebut 7 hari) | Pembaruan otomatis dari appKey/appSecret; umur dibaca dari `expireTime` respons, tidak di-hardcode |
 | Deploy di VPS kantor | Cron dengan `crontab` + `CRON_SECRET`; wajib HTTPS agar stream bisa diputar di browser |
 | Login ditunda | Halaman admin akun EZVIZ belum bisa dibatasi per role → harus diamankan sebelum production (lihat §9) |
@@ -113,7 +113,7 @@ lib/ezviz/token-manager.ts       getValidToken(accountId), refreshToken(accountI
 lib/ezviz/gateway.ts             antarmuka CameraGateway: listDevices, getStatus, snapshot, liveAddress, recordings
 lib/ezviz/mock-gateway.ts        implementasi mock (sumber data sekarang)
 lib/ezviz/ezviz-gateway.ts       implementasi asli, memakai token-manager + usage counter
-lib/ezviz/live-limiter.ts        1 sesi live aktif per akun
+lib/live-limiter.ts              maks. N sesi live aktif per akun, HD hanya bila sendirian
 lib/ezviz/poller.ts              siklus cek status → CameraEvent
 app/api/cron/ezviz-refresh-tokens/route.ts
 app/api/cron/ezviz-poll-status/route.ts
@@ -144,7 +144,7 @@ Cron harian `ezviz-refresh-tokens`: perbarui semua akun `ACTIVE` yang token-nya 
 
 **Live:** `POST /api/cameras/[id]/live`
 1. Tolak bila kamera `OFFLINE`/`UNKNOWN`.
-2. `live-limiter`: bila akun sudah punya `LiveSession` aktif (belum `endedAt`, belum lewat `expiresAt`) milik kamera lain → balas 409 "Kamera lain pada akun kontraktor ini sedang dibuka". Sesi untuk kamera yang sama dipakai ulang.
+2. `live-limiter` (di dalam transaksi dengan advisory lock per akun): hitung `LiveSession` aktif (belum `endedAt`, belum lewat `expiresAt`) milik kamera lain. Sudah `LIVE_MAX_SESSIONS_PER_ACCOUNT` → 409 `code: "full"`; HD diminta atau sedang berjalan bersamaan kamera lain → 409 `code: "hd_busy"`. Sesi untuk kamera yang sama ditutup dan diganti.
 3. Minta live address ke EZVIZ, buat `LiveSession` (`expiresAt = +3 menit`), kembalikan hanya URL stream (tanpa token/secret).
 4. Interaksi klien memperpanjang sesi (heartbeat); `DELETE` atau kedaluwarsa menutupnya. Pembersih sesi berjalan di cron status.
 5. `liveSeconds` dicatat ke `EzvizUsageDaily`.

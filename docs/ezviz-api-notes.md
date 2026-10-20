@@ -85,7 +85,7 @@ Semua isi di bawah **bersumber dari dokumentasi**, kecuali yang ditandai ⚠️ 
   - Set `expireTime = 180` agar sejalan dengan auto-stop 3 menit; panggil `disable` saat sesi ditutup.
   - Pakai **`quality=2` (sub-stream)** sebagai bawaan untuk menghemat bandwidth 1 Mbps; HD hanya bila diminta dan akun tidak sedang dipakai.
   - Playback rekaman MicroSD memakai endpoint yang sama dengan `type=2` + `startTime`/`stopTime` (mis. rentang 1 jam yang dipilih di UI), jadi tidak butuh endpoint terpisah.
-  - Pembatas 1 sesi aktif per akun tetap berlaku untuk live maupun playback.
+  - Pembatas maks. N sesi aktif per akun (`LIVE_MAX_SESSIONS_PER_ACCOUNT`, bawaan 2) berlaku untuk live maupun playback; HD hanya bila tidak ada live lain di akun.
 - ⚠️ Belum jelas: apakah video terenkripsi (`isEncrypt = 1`) bisa diputar via HLS tanpa kode. Syarat aman: nonaktifkan enkripsi video pada kamera yang dipasang, atau uji dengan perangkat asli.
 - ⚠️ URL HLS berada di host EZVIZ; periksa apakah butuh header/CORS khusus untuk diputar dari domain kita.
 

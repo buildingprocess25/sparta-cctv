@@ -36,7 +36,7 @@ Mode `CAMERA_DATA_SOURCE=ezviz` membutuhkan dua pemicu cron. Endpoint menolak re
 
 ## Struktur
 
-- `app/(app)/` — Dashboard (`/`), Live View (`/kamera/[id]`), admin akun EZVIZ (`/pengaturan/ezviz`, butuh `ADMIN_UI_ENABLED=true`); halaman lain masih placeholder
+- `app/(app)/` — Dashboard (`/`), Live View (`/kamera/[id]`), live semua kamera kontraktor (`/kontraktor/[id]/live`), admin akun EZVIZ (`/pengaturan/ezviz`, butuh `ADMIN_UI_ENABLED=true`); halaman lain masih placeholder
 - `lib/monitoring.ts` — akses data dashboard/detail kamera (mock atau database)
 - `lib/seed-data.ts` — data contoh: 8 kontraktor, 19 toko, 46 kamera
 - `lib/poller/` — poller status kamera, aturan uptime/putus, penyimpanan snapshot

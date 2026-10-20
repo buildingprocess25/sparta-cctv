@@ -1,6 +1,8 @@
 # Rencana Implementasi: Multi-Live per Kontraktor
 
-Status (20 Okt 2026): **rencana, belum dikerjakan.**
+Status (20 Okt 2026): **Fase 1–6 selesai (kode); Fase 0 dan uji manual dengan kamera asli belum dijalankan.**
+Bawaan `LIVE_MAX_SESSIONS_PER_ACCOUNT` sementara **2** (pilihan konservatif) sampai Fase 0 membuktikan 3 stream stabil.
+Akun uji saat ini hanya punya 2 kamera, jadi uji 3 stream butuh kamera ketiga.
 
 ## 1. Tujuan dan keputusan
 
