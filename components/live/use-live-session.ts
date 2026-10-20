@@ -23,7 +23,8 @@ export type LiveSession = {
     ezopen: EzopenAccess | null;
     videoRef: React.RefObject<HTMLVideoElement | null>;
     controlsRef: React.RefObject<EzopenControls | null>;
-    start(highQuality?: boolean): Promise<void>;
+    /** code: kode penolakan pembatas ("full" | "hd_busy") bila ditolak */
+    start(highQuality?: boolean): Promise<{ ok: boolean; code: string | null }>;
     stop(): void;
     /** heartbeat langsung (mis. saat frame pertama tampil) */
     heartbeat(): void;
@@ -139,7 +140,7 @@ export function useLiveSession({
         }
     }
 
-    async function start(highQuality = false) {
+    async function start(highQuality = false): Promise<{ ok: boolean; code: string | null }> {
         endSession();
         setState("loading");
         setError(null);
@@ -150,11 +151,13 @@ export function useLiveSession({
             : highQuality
               ? "?quality=1"
               : "";
+        let code: string | null = null;
         try {
             const res = await fetch(`/api/cameras/${encodeURIComponent(cameraId)}/live${query}`, { method: "POST" });
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}));
-                setErrorCode(typeof body.code === "string" ? body.code : null);
+                code = typeof body.code === "string" ? body.code : null;
+                setErrorCode(code);
                 throw new Error(body.error ?? `HTTP ${res.status}`);
             }
             const body = (await res.json()) as (
@@ -168,11 +171,13 @@ export function useLiveSession({
             } else {
                 attachHls(body.url);
             }
+            return { ok: true, code: null };
         } catch (err) {
             setEzopen(null);
             const msg = err instanceof Error ? err.message : "Gagal memulai stream";
             fail(msg);
             callbacks.current.onStartError?.(msg);
+            return { ok: false, code };
         }
     }
 

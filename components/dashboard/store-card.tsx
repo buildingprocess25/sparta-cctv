@@ -1,6 +1,10 @@
+import Link from "next/link";
+import { Radio } from "lucide-react";
 import { CameraTile } from "@/components/dashboard/camera-tile";
 import { formatShortDate } from "@/lib/format";
 import type { StoreView } from "@/lib/monitoring";
+import { canGoLive } from "@/lib/monitoring-core";
+import { cn } from "@/lib/utils";
 
 function ProgressBar({ value }: { value: number }) {
     return (
@@ -16,12 +20,32 @@ function ProgressBar({ value }: { value: number }) {
     );
 }
 
+/** Ke grid live semua kamera kontraktor toko ini. */
+function LiveAllLink({ store, className }: { store: StoreView; className?: string }) {
+    return (
+        <Link
+            href={`/kontraktor/${encodeURIComponent(store.contractorId)}/live`}
+            className={cn(
+                "flex h-8 shrink-0 items-center gap-1.5 rounded-lg border bg-card px-2.5 text-xs font-semibold text-primary hover:bg-muted",
+                className,
+            )}
+        >
+            <Radio className="size-3.5" />
+            Live semua kamera
+        </Link>
+    );
+}
+
 export function StoreCard({ store, now }: { store: StoreView; now: Date }) {
+    const liveable = store.cameras.some(canGoLive);
     return (
         <section className="flex flex-col gap-4 rounded-xl border bg-card p-4 lg:px-5 lg:pt-[18px] lg:pb-5">
             {/* Header mobile */}
             <header className="flex flex-col gap-1 lg:hidden">
-                <h2 className="text-[15px] font-semibold">{store.name}</h2>
+                <div className="flex items-start justify-between gap-3">
+                    <h2 className="text-[15px] font-semibold">{store.name}</h2>
+                    {liveable && <LiveAllLink store={store} className="-mt-1" />}
+                </div>
                 <p className="text-xs font-medium text-muted-foreground">
                     {store.code} · {store.contractorName}
                 </p>
@@ -45,17 +69,20 @@ export function StoreCard({ store, now }: { store: StoreView; now: Date }) {
                         {store.contractorName} · {store.address}
                     </p>
                 </div>
-                <div className="flex w-[200px] flex-col gap-1.5">
-                    <p className="flex items-baseline gap-1.5 whitespace-nowrap">
-                        <span className="text-[13px] font-semibold">Progres {store.progress}%</span>
-                        {store.targetDate ? (
-                            <span className="text-[12.5px] font-medium text-subtle">
-                                · target {formatShortDate(store.targetDate)}
-                            </span>
-                        ) : null}
-                    </p>
-                    <div className="flex">
-                        <ProgressBar value={store.progress} />
+                <div className="flex items-center gap-5">
+                    {liveable && <LiveAllLink store={store} />}
+                    <div className="flex w-[200px] flex-col gap-1.5">
+                        <p className="flex items-baseline gap-1.5 whitespace-nowrap">
+                            <span className="text-[13px] font-semibold">Progres {store.progress}%</span>
+                            {store.targetDate ? (
+                                <span className="text-[12.5px] font-medium text-subtle">
+                                    · target {formatShortDate(store.targetDate)}
+                                </span>
+                            ) : null}
+                        </p>
+                        <div className="flex">
+                            <ProgressBar value={store.progress} />
+                        </div>
                     </div>
                 </div>
             </header>

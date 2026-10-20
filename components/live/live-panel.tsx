@@ -238,7 +238,7 @@ function LivePlayer({
         setWatched(0);
         setRemaining(AUTO_STOP_SECONDS);
         resetControls();
-        await session.start(highQuality);
+        return session.start(highQuality);
     }
 
     function stopStream() {
@@ -321,10 +321,15 @@ function LivePlayer({
     }
 
     // Ganti kualitas = minta alamat .hd.live / .live baru, player dipasang ulang.
-    function toggleHd() {
+    // HD ditolak bila kamera lain di akun ini sedang live (pembatas bandwidth) → kembali ke SD.
+    async function toggleHd() {
         const next = !hd;
         setHd(next);
-        void startStream(next);
+        const result = await startStream(next);
+        if (next && result?.code === "hd_busy") {
+            setHd(false);
+            await startStream(false);
+        }
     }
 
     return (
