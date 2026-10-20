@@ -245,6 +245,13 @@ describe("EzvizGateway", () => {
         assert.match(access.accessToken, /^at\.fake-/);
     });
 
+    it("getPlayerAccess menolak kamera dengan enkripsi video aktif", async () => {
+        server.overrides.set("/api/lapp/device/info", () => ({
+            body: { code: "200", msg: "ok", data: { deviceSerial: "D1", deviceName: "Cam", model: "CS-H8c", status: 1, isEncrypt: 1 } },
+        }));
+        await assert.rejects(ezviz.getPlayerAccess(ref), (e: GatewayError) => e.kind === "unsupported" && /Enkripsi/.test(e.message));
+    });
+
     it("captureSnapshot mengunduh gambar dari picUrl", async () => {
         const img = await ezviz.captureSnapshot(ref, { quality: 1 });
         assert.equal(img.contentType, "image/jpeg");

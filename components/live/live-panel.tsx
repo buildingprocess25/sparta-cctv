@@ -233,11 +233,27 @@ function LivePlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [playing]);
 
-    // Cleanup HLS saat unmount
+    // Sesi server yang sedang dibuka komponen ini; ditutup saat stop, error, atau unmount agar
+    // tidak memblokir kamera lain pada akun yang sama (pembatas 1 sesi per akun).
+    const sessionRef = useRef<string | null>(null);
+    function endSession() {
+        const session = sessionRef.current;
+        if (!session) return;
+        sessionRef.current = null;
+        // keepalive: tetap terkirim walau halaman sedang ditinggalkan
+        fetch(`/api/cameras/${encodeURIComponent(cameraId)}/live?session=${encodeURIComponent(session)}`, {
+            method: "DELETE",
+            keepalive: true,
+        }).catch(() => {});
+    }
+
+    // Cleanup HLS & sesi saat unmount (pindah halaman, ganti tab live/playback, ganti rentang)
     useEffect(() => {
         return () => {
             destroyHls();
+            endSession();
         };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     function destroyHls() {
@@ -249,6 +265,7 @@ function LivePlayer({
 
     async function startStream(highQuality = hd) {
         if (offline) return;
+        endSession();
         setStreamState("loading");
         setStreamError(null);
         setWatched(0);
@@ -266,9 +283,11 @@ function LivePlayer({
                 const body = await res.json().catch(() => ({}));
                 throw new Error(body.error ?? `HTTP ${res.status}`);
             }
-            const body = (await res.json()) as
+            const body = (await res.json()) as (
                 | ({ kind: "ezopen"; expiresAt: string } & EzopenAccess)
-                | { kind: "hls"; url: string; expiresAt: string };
+                | { kind: "hls"; url: string; expiresAt: string }
+            ) & { sessionId: string | null };
+            sessionRef.current = body.sessionId;
             if (body.kind === "ezopen") {
                 // Status "playing" diset oleh EzopenPlayer saat frame pertama tampil.
                 setEzopen({ url: body.url, accessToken: body.accessToken, domain: body.domain });
@@ -314,6 +333,7 @@ function LivePlayer({
                     setStreamError(`Stream gagal: ${data.details ?? data.type ?? "unknown"}`);
                     setStreamState("error");
                     destroyHls();
+                    endSession();
                 }
             });
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -344,21 +364,23 @@ function LivePlayer({
             video.load();
         }
         // Beritahu server agar sesi ditutup (fire-and-forget)
-        fetch(`/api/cameras/${encodeURIComponent(cameraId)}/live`, { method: "DELETE" }).catch(() => {});
+        endSession();
         setStreamState("idle");
         setStreamError(null);
     }
 
     const lastBeat = useRef(0);
+    const heartbeat = useCallback(() => {
+        lastBeat.current = Date.now();
+        fetch(`/api/cameras/${encodeURIComponent(cameraId)}/live`, { method: "PATCH" }).catch(() => {});
+    }, [cameraId]);
     const touch = useCallback(() => {
         if (!playing) return;
         setRemaining(AUTO_STOP_SECONDS);
         // Heartbeat ke server (maks. 1x per 60 dtk) agar alamat stream diperpanjang.
-        const now = Date.now();
-        if (now - lastBeat.current < HEARTBEAT_MIN_MS) return;
-        lastBeat.current = now;
-        fetch(`/api/cameras/${encodeURIComponent(cameraId)}/live`, { method: "PATCH" }).catch(() => {});
-    }, [playing, cameraId]);
+        if (Date.now() - lastBeat.current < HEARTBEAT_MIN_MS) return;
+        heartbeat();
+    }, [playing, heartbeat]);
 
     async function toggleSound() {
         const next = !sound;
@@ -463,11 +485,16 @@ function LivePlayer({
                     access={ezopen}
                     controlsRef={controls}
                     onTalkChange={onTalkChange}
-                    onPlaying={() => setStreamState("playing")}
+                    onPlaying={() => {
+                        setStreamState("playing");
+                        // Server membuat sesi ezopen "pending" (60 dtk); frame pertama → perpanjang ke 3 menit.
+                        heartbeat();
+                    }}
                     onError={(msg) => {
                         setEzopen(null);
                         setStreamError(msg);
                         setStreamState("error");
+                        endSession();
                     }}
                 />
             )}

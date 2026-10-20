@@ -7,6 +7,10 @@ import { addLiveSeconds, liveSecondsOf } from "@/lib/live-usage";
 import { getCameraDetail } from "@/lib/monitoring";
 
 const LIVE_EXPIRE_SECONDS = 3 * 60; // 3 menit, sesuai auto-stop di UI
+// Sesi ezopen yang belum memutar frame pertama. Diperpanjang ke LIVE_EXPIRE_SECONDS oleh PATCH
+// dari klien saat video tampil; bila player gagal dan klien tidak sempat DELETE, kamera lain
+// pada akun yang sama hanya terblokir selama ini. Cukup longgar untuk kamera baterai yang bangun.
+const PENDING_EXPIRE_SECONDS = 60;
 
 // "ezopen" (bawaan): player EZUIKit di browser. Satu-satunya cara yang terbukti jalan untuk kamera
 // baterai/4G seperti EZVIZ EB8 — HLS/RTMP/FLV standar hanya menghasilkan "/ErrCode/6520|9053".
@@ -31,10 +35,12 @@ function parsePlayback(params: URLSearchParams): RecordingRange | null | "invali
     return { start, end: stop };
 }
 
-// Tutup semua sesi terbuka kamera ini dan catat detik pemakaiannya.
-async function closeSessions(prisma: Prisma, accountId: string, cameraId: string) {
+// Tutup sesi terbuka kamera ini (semua, atau hanya `sessionId`) dan catat detik pemakaiannya.
+async function closeSessions(prisma: Prisma, accountId: string, cameraId: string, sessionId?: string) {
     const now = new Date();
-    const open = await prisma.liveSession.findMany({ where: { cameraId, endedAt: null } });
+    const open = await prisma.liveSession.findMany({
+        where: { cameraId, endedAt: null, ...(sessionId ? { id: sessionId } : {}) },
+    });
     if (open.length === 0) return;
     await prisma.liveSession.updateMany({ where: { id: { in: open.map((s) => s.id) } }, data: { endedAt: now } });
     const seconds = open.reduce((sum, s) => sum + liveSecondsOf(s, now), 0);
@@ -43,7 +49,8 @@ async function closeSessions(prisma: Prisma, accountId: string, cameraId: string
 
 // POST /api/cameras/[id]/live — mulai sesi live (atau playback MicroSD dengan ?begin=&end=).
 // Live dan playback berbagi pembatas 1 sesi per akun, heartbeat PATCH, dan DELETE.
-// Balasan: { kind: "ezopen", url, accessToken, domain, expiresAt } atau { kind: "hls", url, expiresAt }.
+// Balasan: { kind: "ezopen", url, accessToken, domain, expiresAt, sessionId } atau
+// { kind: "hls", url, expiresAt, sessionId }. sessionId dipakai klien untuk DELETE ?session=.
 // KEAMANAN (mode ezopen): accessToken akun kontraktor dikirim ke browser karena EZUIKit memerlukannya.
 // Wajib di balik auth/proxy sebelum production (docs/ezviz-integration-plan.md §9); idealnya diganti
 // token sub-akun (RAM) yang dibatasi ke perangkat ini.
@@ -101,16 +108,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (liveProtocol() === "ezopen") {
         try {
             const access = await getGateway().getPlayerAccess(ref, { quality, playback: playback ?? undefined });
-            const expiresAt = new Date(Date.now() + LIVE_EXPIRE_SECONDS * 1000);
+            const expiresAt = new Date(Date.now() + PENDING_EXPIRE_SECONDS * 1000);
+            let sessionId: string | null = null;
             try {
                 const { default: prisma } = await import("@/lib/prisma");
                 await closeSessions(prisma, store.ezvizAccount.id, id);
-                await prisma.liveSession.create({ data: { accountId: store.ezvizAccount.id, cameraId: id, expiresAt } });
+                const session = await prisma.liveSession.create({
+                    data: { accountId: store.ezvizAccount.id, cameraId: id, expiresAt },
+                });
+                sessionId = session.id;
             } catch (dbErr) {
                 console.error("[live] Gagal menyimpan LiveSession:", dbErr);
             }
             return Response.json(
-                { kind: "ezopen", ...access, expiresAt: expiresAt.toISOString() },
+                { kind: "ezopen", ...access, expiresAt: expiresAt.toISOString(), sessionId },
                 { headers: { "Cache-Control": "no-store" } },
             );
         } catch (error) {
@@ -135,11 +146,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         });
 
         // Simpan LiveSession + hlsUrl ke database (bukan in-memory, agar bisa diakses dari route /hls)
+        let sessionId: string | null = null;
         try {
             const { default: prisma } = await import("@/lib/prisma");
             if (store.ezvizAccount?.id) {
                 await closeSessions(prisma, store.ezvizAccount.id, id);
-                await prisma.liveSession.create({
+                const session = await prisma.liveSession.create({
                     data: {
                         accountId: store.ezvizAccount.id,
                         cameraId: id,
@@ -148,6 +160,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                         expiresAt: stream.expiresAt,
                     },
                 });
+                sessionId = session.id;
             }
         } catch (dbErr) {
             console.error("[live] Gagal menyimpan LiveSession:", dbErr);
@@ -156,7 +169,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Kembalikan URL proxy ke browser (URL EZVIZ tidak dikirim ke klien)
         const appBase = process.env.APP_BASE_URL ?? "http://localhost:3005";
         const proxiedUrl = `${appBase}/api/cameras/${encodeURIComponent(id)}/hls`;
-        return Response.json({ kind: "hls", url: proxiedUrl, expiresAt: stream.expiresAt.toISOString(), streamId: stream.id });
+        return Response.json({
+            kind: "hls",
+            url: proxiedUrl,
+            expiresAt: stream.expiresAt.toISOString(),
+            streamId: stream.id,
+            sessionId,
+        });
     } catch (error) {
         if (isGatewayError(error)) {
             const status = error.kind === "offline" ? 409 : error.kind === "rate_limited" ? 429 : 502;
@@ -167,9 +186,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 }
 
-// DELETE /api/cameras/[id]/live — hentikan sesi live
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+// DELETE /api/cameras/[id]/live[?session=<id>] — hentikan sesi live. Dengan ?session= hanya sesi
+// itu yang ditutup, agar DELETE yang terlambat (mis. saat pindah tab live → playback) tidak ikut
+// menutup sesi baru kamera yang sama.
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params;
+    const sessionId = new URL(req.url).searchParams.get("session") ?? undefined;
 
     if (getDataSource() !== "ezviz") {
         return new Response(null, { status: 204 });
@@ -178,7 +200,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     try {
         const { default: prisma } = await import("@/lib/prisma");
         const sessions = await prisma.liveSession.findMany({
-            where: { cameraId: id, endedAt: null },
+            where: { cameraId: id, endedAt: null, ...(sessionId ? { id: sessionId } : {}) },
         });
 
         const detail = await getCameraDetail(decodeURIComponent(id));
@@ -200,7 +222,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
         }
 
         const accountId = detail?.store.ezvizAccount?.id ?? sessions[0]?.accountId;
-        if (accountId) await closeSessions(prisma, accountId, id);
+        if (accountId) await closeSessions(prisma, accountId, id, sessionId);
     } catch (error) {
         console.error("[live] DELETE error:", error);
     }
@@ -227,7 +249,8 @@ export async function PATCH(_req: Request, { params }: { params: Promise<{ id: s
     });
     if (!current) return Response.json({ error: "Tidak ada sesi live aktif" }, { status: 404 });
 
-    // ezopen: tidak ada alamat yang kedaluwarsa, cukup perpanjang sesi untuk pembatas & usage.
+    // ezopen: tidak ada alamat yang kedaluwarsa, cukup perpanjang sesi untuk pembatas & usage
+    // (juga dipanggil sekali saat frame pertama tampil, mengubah sesi pending menjadi 3 menit).
     if (!current.urlId) {
         const expiresAt = new Date(Date.now() + LIVE_EXPIRE_SECONDS * 1000);
         await prisma.liveSession.update({ where: { id: current.id }, data: { expiresAt } });

@@ -162,7 +162,18 @@ export class EzvizGateway implements CameraGateway {
 
     async getPlayerAccess(ref: DeviceRef, options: PlayerAccessOptions = {}): Promise<PlayerAccess> {
         const r = resolve(ref);
-        const { accessToken, areaDomain } = await this.call(r.accountId, async (ctx) => ctx);
+        const { accessToken, areaDomain, encrypted } = await this.call(r.accountId, async (ctx) => ({
+            ...ctx,
+            encrypted: (await this.client.getDeviceInfo(ctx.areaDomain, ctx.accessToken, r.deviceSerial)).isEncrypt,
+        }));
+        // Stream terenkripsi butuh kode verifikasi perangkat di URL; tanpanya decoder EZUIKit gagal
+        // diam-diam (handleRunTimeInfoError, nErrorCode 5). Tolak lebih awal dengan pesan yang jelas.
+        if (encrypted) {
+            throw new GatewayError(
+                "unsupported",
+                "Enkripsi video kamera ini aktif. Matikan \"Enkripsi Gambar\" di aplikasi EZVIZ, lalu coba lagi.",
+            );
+        }
         // Playback MicroSD: begin/end dalam waktu lokal perangkat (WIB), format yyyyMMddHHmmss.
         const suffix = options.playback
             ? `rec?begin=${formatEzopenTime(options.playback.start)}&end=${formatEzopenTime(options.playback.end)}`
